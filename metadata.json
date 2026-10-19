@@ -1,0 +1,6 @@
+{
+  "name": "Расписание недели и Медиа",
+  "description": "Интерактивное расписание на неделю с временной шкалой, синхронизацией и медиа-галереей для фото и видео без внешних ключей.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

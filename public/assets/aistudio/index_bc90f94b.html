@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Расписание недели</title>
+<style>
+  :root { --hourH: 44px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 100%);
+    min-height: 100vh; color: #1e293b; padding: 20px;
+  }
+  .container { max-width: 880px; margin: 0 auto; }
+  h1 { text-align: center; font-size: 26px; margin-bottom: 4px; }
+  .subtitle { text-align: center; color: #64748b; margin-bottom: 18px; font-size: 14px; }
+
+  /* Вкладки */
+  .tabs { display:flex; gap:8px; justify-content:center; margin-bottom:18px; flex-wrap:wrap; }
+  .tab { border:2px solid #e2e8f0; background:#fff; border-radius:10px; padding:9px 18px;
+    font-size:14px; font-weight:600; cursor:pointer; color:#475569; transition:.15s; }
+  .tab.active { border-color:#4f8ef7; background:#4f8ef7; color:#fff; box-shadow:0 4px 12px rgba(79,142,247,.35); }
+
+  /* Выбор дня */
+  .days { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .day-btn {
+    border: 2px solid #e2e8f0; background: #fff; border-radius: 12px;
+    padding: 8px 14px; cursor: pointer; text-align: center; min-width: 78px;
+    transition: all .15s; position: relative;
+  }
+  .day-btn:hover { border-color: #94a3b8; }
+  .day-btn.active { border-color: #4f8ef7; background: #4f8ef7; color: #fff; box-shadow: 0 4px 12px rgba(79,142,247,.35); }
+  .day-btn .wd { display: block; font-size: 12px; text-transform: capitalize; opacity: .75; }
+  .day-btn .dn { display: block; font-size: 20px; font-weight: 700; }
+  .day-btn .dot { position: absolute; top: 6px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+
+  /* Карточки и формы */
+  .card { background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,.06); margin-bottom: 20px; }
+  .card h2 { font-size: 16px; margin-bottom: 12px; }
+  form { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: #64748b; }
+  input, select {
+    border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 8px 10px;
+    font-size: 14px; background: #f8fafc;
+  }
+  input:focus, select:focus { outline: none; border-color: #4f8ef7; }
+  button.add {
+    background: #4f8ef7; color: #fff; border: none; border-radius: 8px;
+    padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button.add:hover { background: #3b7ce0; }
+  button.clear {
+    background: #fee2e2; color: #b91c1c; border: none; border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer; margin-left: auto;
+  }
+  .msg { margin-top: 10px; font-size: 13px; padding: 8px 12px; border-radius: 8px; display: none; }
+  .msg.ok   { display: block; background: #dcfce7; color: #166534; }
+  .msg.warn { display: block; background: #fef9c3; color: #854d0e; }
+  .msg.err  { display: block; background: #fee2e2; color: #991b1b; }
+
+  /* Шкала времени */
+  .timeline { display: flex; border: 1.5px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #fff; }
+  .hours { width: 52px; position: relative; flex-shrink: 0; border-right: 1.5px solid #e2e8f0; background: #f8fafc; }
+  .hour-label { position: absolute; right: 6px; font-size: 11px; color: #94a3b8; transform: translateY(-50%); }
+  .canvas {
+    flex: 1; position: relative; height: calc(24 * var(--hourH));
+    background: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hourH) - 1px), #f1f5f9 calc(var(--hourH) - 1px), #f1f5f9 var(--hourH));
+  }
+  .event {
+    position: absolute; left: 6px; border-radius: 8px; padding: 4px 8px;
+    color: #fff; font-size: 12px; overflow: hidden; cursor: pointer;
+    border-left: 4px solid rgba(0,0,0,.2); box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    line-height: 1.3;
+  }
+  .event b { font-size: 12px; }
+  .scrollbox { max-height: 560px; overflow-y: auto; }
+
+  /* Список занятий */
+  .list-item { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid #f1f5f9; }
+  .chip { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; }
+  .list-item .time { font-weight: 600; min-width: 105px; font-size: 14px; }
+  .list-item .tname { font-size: 14px; }
+  .list-item .note { color: #64748b; font-size: 13px; }
+  .del { margin-left: auto; background: none; border: none; color: #ef4444; font-size: 18px; cursor: pointer; }
+  .empty { text-align: center; color: #94a3b8; padding: 20px; font-size: 14px; }
+
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 14px 0; }
+  .legend span { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #475569; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  /* Панель синхронизации */
+  .mini { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px;
+    padding:6px 10px; font-size:13px; cursor:pointer; }
+  .mini:hover { background:#e2e8f0; }
+
+  /* Медиа-вкладка */
+  .dropzone { border:2px dashed #cbd5e1; border-radius:12px; padding:24px; text-align:center;
+    color:#64748b; cursor:pointer; background:#f8fafc; transition:.15s; line-height:1.6; }
+  .dropzone:hover, .dropzone.over { border-color:#4f8ef7; background:#eff6ff; color:#2563eb; }
+  .mgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:10px; }
+  .tile { position:relative; border-radius:10px; overflow:hidden; background:#f1f5f9; aspect-ratio:1; cursor:pointer; }
+  .tile img, .tile video { width:100%; height:100%; object-fit:cover; display:block; }
+  .tile .play { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:38px; height:38px; border-radius:50%; background:rgba(0,0,0,.55); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:16px; pointer-events:none; }
+  .tile .tag { position:absolute; left:6px; top:6px; background:rgba(0,0,0,.55); color:#fff;
+    font-size:11px; padding:2px 7px; border-radius:6px; }
+  .tile .tdel { position:absolute; right:6px; top:6px; width:26px; height:26px; border:none;
+    border-radius:7px; background:rgba(239,68,68,.9); color:#fff; cursor:pointer; font-size:13px; }
+
+  /* Полноэкранный просмотрщик */
+  .viewer { position:fixed; inset:0; background:rgba(15,23,42,.93); z-index:100;
+    display:flex; align-items:center; justify-content:center; }
+  .viewer img, .viewer video { max-width:92vw; max-height:82vh; border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+  .viewer button { z-index:2; }
+  .vclose, .vdel { position:absolute; top:14px; border:none; border-radius:8px; padding:9px 15px;
+    font-size:14px; cursor:pointer; }
+  .vclose { right:14px; background:rgba(255,255,255,.16); color:#fff; }
+  .vdel { left:14px; background:rgba(239,68,68,.88); color:#fff; }
+  .vnav { position:absolute; top:50%; transform:translateY(-50%); width:46px; height:46px;
+    border:none; border-radius:50%; background:rgba(255,255,255,.16); color:#fff; font-size:28px;
+    cursor:pointer; line-height:1; }
+  .vprev { left:14px; } .vnext { right:14px; }
+  .vcap { position:absolute; bottom:16px; left:0; right:0; text-align:center; color:#e2e8f0; font-size:13px; padding:0 60px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📅 Моё расписание на неделю</h1>
+  <div class="subtitle">Выберите день, задайте время и вид занятости</div>
+
+  <div class="tabs">
+    <button class="tab active" id="tabBtnSched" type="button">📅 Расписание</button>
+    <button class="tab" id="tabBtnMedia" type="button">📷 Фото и видео</button>
+  </div>
+
+  <!-- ============ ВКЛАДКА: РАСПИСАНИЕ ============ -->
+  <div id="tabSched">
+    <div class="days" id="days"></div>
+
+    <div class="card" id="syncPanel" style="display:none">
+      <h2>☁️ Синхронизация между устройствами</h2>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:14px;">
+        <span>Код этого устройства: <b id="codeLabel">—</b></span>
+        <button class="mini" id="copyCode" type="button">Копировать</button>
+        <input id="codeInput" placeholder="код с другого устройства" style="width:180px">
+        <button class="add" id="joinBtn" type="button" style="padding:8px 14px">Подключить</button>
+      </div>
+      <div id="syncStatus" style="margin-top:8px; font-size:13px; color:#64748b;"></div>
+    </div>
+
+    <div class="card">
+      <h2 id="dayTitle"></h2>
+      <form id="form">
+        <div class="field"><label>Начало</label><input type="time" id="start" value="09:00" required></div>
+        <div class="field"><label>Конец</label><input type="time" id="end" value="10:00" required></div>
+        <div class="field"><label>Вид занятости</label><select id="type"></select></div>
+        <div class="field"><label>Комментарий</label><input type="text" id="note" placeholder="необязательно" style="width:160px"></div>
+        <button class="add" type="submit">➕ Добавить</button>
+        <button class="clear" type="button" id="clearDay">Очистить день</button>
+      </form>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="scrollbox"><div class="timeline" id="timeline">
+        <div class="hours" id="hours"></div>
+        <div class="canvas" id="canvas"></div>
+      </div></div>
+    </div>
+
+    <div class="card" id="listCard">
+      <h2>Список занятий</h2>
+      <div id="list"></div>
+    </div>
+  </div>
+
+  <!-- ============ ВКЛАДКА: МЕДИА ============ -->
+  <div id="tabMedia" style="display:none">
+    <div class="card">
+      <h2>➕ Добавить фото или видео</h2>
+      <div class="dropzone" id="dropzone">
+        📎 Перетащите файлы сюда или нажмите, чтобы выбрать<br>
+        <small>фото сжимаются автоматически · видео до 100 МБ хранятся в Cloudinary</small>
+      </div>
+      <input type="file" id="fileInput" accept="image/*,video/*" multiple style="display:none">
+      <div id="mediaStatus" style="margin-top:10px; font-size:13px; color:#64748b;"></div>
+    </div>
+    <div class="card">
+      <h2 id="mediaCount">Галерея</h2>
+      <div class="mgrid" id="mgrid"></div>
+      <div class="empty" id="mediaEmpty">Пока ничего нет — добавьте первое фото или видео 🙂</div>
+    </div>
+  </div>
+</div>
+
+<!-- Полноэкранный просмотрщик -->
+<div class="viewer" id="viewer" style="display:none">
+  <button class="vclose" id="vClose" type="button">✕</button>
+  <button class="vdel" id="vDel" type="button">🗑 Удалить</button>
+  <button class="vnav vprev" id="vPrev" type="button">‹</button>
+  <button class="vnav vnext" id="vNext" type="button">›</button>
+  <div id="vBody"></div>
+  <div class="vcap" id="vCap"></div>
+</div>
+
+<script type="module">
+/* ============ 1. ОБЛАКО: FIREBASE ============ */
+const firebaseConfig = {
+  apiKey: "AIzaSyBWa1uMmEH6xx7q0wxpP5Ld3X1ZjjWpf0s",
+  authDomain: "raspisanie-fc5d2.firebaseapp.com",
+  projectId: "raspisanie-fc5d2",
+  storageBucket: "raspisanie-fc5d2.firebasestorage.app",
+  messagingSenderId: "408084828645",
+  appId: "1:408084828645:web:8b8ad715a659acb9245f0c"
+};
+
+let db = null;
+let fsDoc, fsGetDoc, fsSetDoc, fsOnSnap, fsCollection, fsQuery, fsWhere, fsAddDoc, fsDeleteDoc;
+let CLOUD = false;
+try {
+  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  const fs = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+  if (!firebaseConfig.apiKey.includes("ВСТАВЬТЕ")) {
+    db = fs.getFirestore(initializeApp(firebaseConfig));
+    fsDoc = fs.doc; fsGetDoc = fs.getDoc; fsSetDoc = fs.setDoc; fsOnSnap = fs.onSnapshot;
+    fsCollection = fs.collection; fsQuery = fs.query; fsWhere = fs.where;
+    fsAddDoc = fs.addDoc; fsDeleteDoc = fs.deleteDoc;
+    CLOUD = true;
+  }
+} catch (e) { /* Firebase недоступен — сайт работает локально */ }
+
+/* ============ 1b. ОБЛАКО: CLOUDINARY (для видео) ============ */
+const CLD = {
+  cloud:  "acggp2j1",
+  preset: "ml_default",
+  ready:  false
+};
+CLD.ready = CLOUD && !CLD.cloud.includes("ВСТАВЬТЕ") && !CLD.preset.includes("ВСТАВЬТЕ");
+
+const MAX_VIDEO_CLD = 100 * 1024 * 1024;  // лимит бесплатного плана Cloudinary — 100 МБ на файл
+const MAX_VIDEO_B64 = 700 * 1024;         // видео в базу без Cloudinary (короткие клипы)
+
+/* ============ 2. СПРАВОЧНИК ЗАНЯТИЙ ============ */
+const TYPES = {
+  work:     { name: "Работа",      color: "#4f8ef7" },
+  study:    { name: "Учёба",       color: "#9b59f6" },
+  sport:    { name: "Спорт",       color: "#2ecc71" },
+  rest:     { name: "Отдых",       color: "#f5a623" },
+  personal: { name: "Личные дела", color: "#ff6b9d" },
+  other:    { name: "Другое",      color: "#95a5a6" }
+};
+
+/* ============ 3. ДАННЫЕ И КОД СИНХРОНИЗАЦИИ ============ */
+let data = {};
+try { data = JSON.parse(localStorage.getItem("weekSchedule") || "{}"); } catch(e) { data = {}; }
+
+let syncCode = localStorage.getItem("syncCode") || "";
+const ABC = "abcdefghjkmnpqrstuvwxyz23456789";
+function makeCode() {
+  let s = "";
+  for (let i = 0; i < 8; i++) s += ABC[Math.floor(Math.random() * ABC.length)];
+  return s.slice(0, 4) + "-" + s.slice(4);
+}
+if (CLOUD && !syncCode) { syncCode = makeCode(); localStorage.setItem("syncCode", syncCode); }
+
+const days = [];
+for (let i = 0; i < 7; i++) { const d = new Date(); d.setDate(d.getDate() + i); days.push(d); }
+let selectedDate = days[0];
+
+function fmt(d) {
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function toMin(t) { const [h,m] = t.split(":").map(Number); return h*60 + m; }
+
+const $ = id => document.getElementById(id);
+
+function setStatus(t) { const el = $("syncStatus"); if (el) el.textContent = t; }
+function setMediaStatus(t) { const el = $("mediaStatus"); if (el) el.textContent = t; }
+
+/* ============ 4. СОХРАНЕНИЕ РАСПИСАНИЯ ============ */
+let pushTimer = null;
+function save() {
+  try { localStorage.setItem("weekSchedule", JSON.stringify(data)); } catch(e) {}
+  if (!CLOUD) return;
+  setStatus("… сохраняем");
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(push, 500);
+}
+async function push() {
+  try {
+    await fsSetDoc(fsDoc(db, "schedules", syncCode), data);
+    setStatus("✅ Синхронизировано в " + new Date().toLocaleTimeString("ru-RU"));
+  } catch(e) {
+    setStatus("⚠️ Облако недоступно — данные сохранены только в этом браузере");
+  }
+}
+
+let unsub = null;
+function subscribe() {
+  if (!CLOUD) return;
+  if (unsub) unsub();
+  unsub = fsOnSnap(fsDoc(db, "schedules", syncCode), snap => {
+    if (snap.exists()) {
+      const remote = snap.data();
+      if (JSON.stringify(remote) !== JSON.stringify(data)) {
+        data = remote;
+        try { localStorage.setItem("weekSchedule", JSON.stringify(data)); } catch(e) {}
+        renderAll();
+      }
+      setStatus("✅ Синхронизировано");
+    } else {
+      setStatus("☁️ Облако подключено — данных пока нет");
+    }
+  }, err => setStatus("⚠️ Ошибка облака: " + err.code));
+}
+
+/* ============ 5. ОТРИСОВКА РАСПИСАНИЯ ============ */
+function renderDays() {
+  const box = $("days");
+  box.innerHTML = "";
+  days.forEach(d => {
+    const key = fmt(d), btn = document.createElement("div");
+    btn.className = "day-btn" + (fmt(selectedDate) === key ? " active" : "");
+    btn.innerHTML = `<span class="wd">${d.toLocaleDateString("ru-RU",{weekday:"short"})}</span>` +
+                    `<span class="dn">${d.getDate()}</span>` +
+                    (data[key] && data[key].length ? `<span class="dot"></span>` : "");
+    btn.onclick = () => { selectedDate = d; renderAll(); };
+    box.appendChild(btn);
+  });
+}
+
+function renderHours() {
+  const h = $("hours");
+  h.style.height = "calc(24 * var(--hourH))";
+  h.innerHTML = "";
+  for (let i = 0; i <= 24; i++) {
+    const l = document.createElement("div");
+    l.className = "hour-label";
+    l.style.top = `calc(${i} * var(--hourH))`;
+    l.textContent = String(i).padStart(2,"0") + ":00";
+    h.appendChild(l);
+  }
+}
+
+function renderTimeline() {
+  const canvas = $("canvas");
+  canvas.innerHTML = "";
+  const evts = data[fmt(selectedDate)] || [];
+
+  const sorted = [...evts].sort((a,b) => toMin(a.start) - toMin(b.start));
+  const colEnd = [];
+  sorted.forEach(e => {
+    let placed = false;
+    for (let i = 0; i < colEnd.length; i++)
+      if (toMin(e.start) >= colEnd[i]) { e._col = i; colEnd[i] = toMin(e.end); placed = true; break; }
+    if (!placed) { e._col = colEnd.length; colEnd.push(toMin(e.end)); }
+  });
+  const totalCols = Math.max(colEnd.length, 1);
+
+  sorted.forEach((e, idx) => {
+    const start = toMin(e.start), end = toMin(e.end);
+    const b = document.createElement("div");
+    b.className = "event";
+    b.style.background = TYPES[e.type].color;
+    b.style.top  = (start / 1440 * 100) + "%";
+    b.style.height = `max(${(end - start) / 1440 * 100}%, 18px)`;
+    b.style.width = `calc(${100 / totalCols}% - 12px)`;
+    b.style.left  = `calc(${e._col * 100 / totalCols}% + 6px)`;
+    b.title = `${e.start}–${e.end} · ${TYPES[e.type].name}` + (e.note ? ` · ${e.note}` : "");
+    b.innerHTML = `<b>${e.start}–${e.end}</b><br>${TYPES[e.type].name}` +
+                  ((end - start) >= 60 && e.note ? `<br><span style="opacity:.85">${e.note}</span>` : "");
+    b.onclick = () => removeEvent(idx);
+    canvas.appendChild(b);
+  });
+
+  if (fmt(selectedDate) === fmt(new Date())) {
+    const now = new Date();
+    const line = document.createElement("div");
+    line.style.cssText = `position:absolute;left:0;right:0;top:${(now.getHours()*60+now.getMinutes())/1440*100}%;
+      border-top:2px dashed #ef4444;z-index:5;`;
+    canvas.appendChild(line);
+  }
+}
+
+function renderList() {
+  const list = $("list");
+  const evts = [...(data[fmt(selectedDate)] || [])].sort((a,b) => toMin(a.start) - toMin(b.start));
+  if (!evts.length) { list.innerHTML = `<div class="empty">На этот день занятий нет — время свободно 🙂</div>`; return; }
+  list.innerHTML = "";
+  evts.forEach((e, i) => {
+    const row = document.createElement("div");
+    row.className = "list-item";
+    row.innerHTML = `<span class="chip" style="background:${TYPES[e.type].color}"></span>` +
+      `<span class="time">${e.start}–${e.end}</span>` +
+      `<span class="tname">${TYPES[e.type].name}</span>` +
+      (e.note ? `<span class="note">— ${e.note}</span>` : "") +
+      `<button class="del" title="Удалить">✕</button>`;
+    row.querySelector(".del").onclick = () => removeEvent(i);
+    list.appendChild(row);
+  });
+}
+
+function removeEvent(idx) {
+  const key = fmt(selectedDate);
+  data[key].splice(idx, 1);
+  if (!data[key].length) delete data[key];
+  save(); renderAll();
+  showMsg("Занятие удалено", "ok");
+}
+
+function renderAll() {
+  $("dayTitle").textContent =
+    "Добавить занятие — " + selectedDate.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" });
+  renderDays(); renderTimeline(); renderList();
+  document.querySelector(".scrollbox").scrollTop = 7 * 44;
+}
+
+function showMsg(text, cls) {
+  const m = $("msg");
+  m.className = "msg " + cls; m.textContent = text;
+  clearTimeout(m._t); m._t = setTimeout(() => m.className = "msg", 3500);
+}
+
+/* ============ 6. ФОРМА РАСПИСАНИЯ ============ */
+const sel = $("type");
+for (const k in TYPES) {
+  const o = document.createElement("option");
+  o.value = k; o.textContent = TYPES[k].name;
+  sel.appendChild(o);
+}
+const legend = $("legend");
+for (const k in TYPES) legend.innerHTML += `<span><i style="background:${TYPES[k].color}"></i>${TYPES[k].name}</span>`;
+
+ $("form").addEventListener("submit", ev => {
+  ev.preventDefault();
+  const s = $("start").value;
+  let en = $("end").value;
+  const t = sel.value;
+  const note = $("note").value.trim();
+  if (en === "00:00") en = "24:00";
+  if (toMin(en) <= toMin(s)) { showMsg("Ошибка: конец должен быть позже начала", "err"); return; }
+
+  const key = fmt(selectedDate);
+  if (!data[key]) data[key] = [];
+  const conflict = data[key].some(e => toMin(s) < toMin(e.end) && toMin(en) > toMin(e.start));
+  data[key].push({ start: s, end: en, type: t, note });
+  save(); renderAll();
+  showMsg(conflict ? "Добавлено, но период пересекается с другим занятием" : "Занятие добавлено ✔", conflict ? "warn" : "ok");
+  $("note").value = "";
+});
+
+ $("clearDay").onclick = () => {
+  const key = fmt(selectedDate);
+  if (!data[key] || !data[key].length) { showMsg("Этот день и так свободен", "warn"); return; }
+  if (confirm("Удалить все занятия на этот день?")) {
+    delete data[key]; save(); renderAll(); showMsg("День очищен", "ok");
+  }
+};
+
+/* ============ 7. ПАНЕЛЬ СИНХРОНИЗАЦИИ ============ */
+if (CLOUD) {
+  $("syncPanel").style.display = "block";
+  $("codeLabel").textContent = syncCode;
+
+  $("copyCode").onclick = () =>
+    navigator.clipboard.writeText(syncCode).then(() => setStatus("Код скопирован"));
+
+  $("joinBtn").onclick = async () => {
+    const c = $("codeInput").value.trim().toLowerCase();
+    if (!/^[a-z0-9-]{6,}$/.test(c)) { setStatus("Неверный формат кода"); return; }
+    try {
+      const snap = await fsGetDoc(fsDoc(db, "schedules", c));
+      if (!snap.exists() && !confirm("Расписание с таким кодом не найдено.\nИспользовать этот код всё равно?")) return;
+      syncCode = c;
+      localStorage.setItem("syncCode", c);
+      $("codeLabel").textContent = c;
+      if (snap.exists()) {
+        data = snap.data();
+        try { localStorage.setItem("weekSchedule", JSON.stringify(data)); } catch(e) {}
+        renderAll();
+      } else {
+        push();
+      }
+      subscribe();
+      mediaSubscribe();
+      setStatus("✅ Подключено к коду " + c);
+    } catch(e) {
+      setStatus("⚠️ Не удалось проверить код — нет соединения");
+    }
+  };
+
+  subscribe();
+}
+
+/* ============ 8. МЕДИА: ФОТО И ВИДЕО ============ */
+let media = [];
+let mediaUnsub = null;
+let viewIndex = -1;
+const MAX_PHOTO_B64 = 800_000;
+let lastMediaError = "";
+
+function plural(n, forms) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+function formatSize(n) { return n > 1048576 ? (n/1048576).toFixed(1) + " МБ" : Math.round(n/1024) + " КБ"; }
+
+function mediaSubscribe() {
+  if (!CLOUD) return;
+  if (mediaUnsub) mediaUnsub();
+  mediaUnsub = fsOnSnap(
+    fsQuery(fsCollection(db, "media"), fsWhere("code", "==", syncCode)),
+    snap => {
+      media = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      media.sort((a, b) => (b.created || 0) - (a.created || 0));
+      renderMedia();
+    },
+    err => setMediaStatus("⚠️ Ошибка медиа: " + err.code)
+  );
+}
+
+function fileToDataURL(f) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+}
+
+/* Сжатие фото до допустимого размера */
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      let scale = Math.min(1, 1600 / Math.max(w, h));
+      let q = 0.85;
+      const draw = () => {
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * scale));
+        c.height = Math.max(1, Math.round(h * scale));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        return c.toDataURL("image/jpeg", q);
+      };
+      let out = draw();
+      while (out.length > MAX_PHOTO_B64 && (q > 0.45 || scale > 0.3)) {
+        if (q > 0.45) q -= 0.15;
+        else { scale *= 0.85; q = 0.7; }
+        out = draw();
+      }
+      URL.revokeObjectURL(url);
+      resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Не удалось прочитать изображение")); };
+    img.src = url;
+  });
+}
+
+/* ---- Cloudinary: загрузка видео с прогрессом ---- */
+function cloudinaryUpload(file, resourceType, publicId, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("upload_preset", CLD.preset);
+    if (publicId) fd.append("public_id", publicId);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `https://api.cloudinary.com/v1_1/${CLD.cloud}/${resourceType}/upload`);
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded / e.total * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(new Error("Некорректный ответ Cloudinary")); }
+      } else {
+        let msg = "HTTP " + xhr.status;
+        try { msg = JSON.parse(xhr.responseText).error.message || msg; } catch(e) {}
+        reject(new Error(msg));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Нет соединения с Cloudinary"));
+    xhr.send(fd);
+  });
+}
+
+/* ---- Cloudinary: удаление файла ---- */
+async function cloudinaryDestroy(publicId, resourceType) {
+  try {
+    const fd = new FormData();
+    fd.append("public_id", publicId);
+    fd.append("upload_preset", CLD.preset);
+    fd.append("unsigned", "true");
+    const r = await fetch(`https://api.cloudinary.com/v1_1/${CLD.cloud}/${resourceType}/destroy`, { method: "POST", body: fd });
+    const j = await r.json();
+    return j.result === "ok" || j.result === "not found";
+  } catch(e) { return false; }
+}
+
+async function addMedia(file) {
+  const isPhoto = file.type.startsWith("image/");
+  const isVideo = file.type.startsWith("video/");
+  if (!isPhoto && !isVideo) { lastMediaError = "не фото и не видео"; setMediaStatus("⚠️ Можно добавлять только фото и видео"); return false; }
+  try {
+    if (isPhoto) {
+      const dataUrl = await compressImage(file);
+      if (dataUrl.length > 900_000) { lastMediaError = "фото слишком большое даже после сжатия"; setMediaStatus("⚠️ " + lastMediaError); return false; }
+      await fsAddDoc(fsCollection(db, "media"), {
+        code: syncCode, type: "photo", mime: "image/jpeg",
+        name: (file.name || "").slice(0, 80), created: Date.now(), data: dataUrl
+      });
+      return true;
+    }
+
+    /* ---- Видео ---- */
+    if (CLD.ready) {
+      if (file.size > MAX_VIDEO_CLD) {
+        lastMediaError = `видео ${formatSize(file.size)} превышает лимит 100 МБ`;
+        setMediaStatus("⚠️ " + lastMediaError);
+        return false;
+      }
+      setMediaStatus("⏳ Загрузка видео: 0%");
+      const pid = "raspisanie/" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+      const up = await cloudinaryUpload(file, "video", pid, p => setMediaStatus(`⏳ Загрузка видео: ${p}%`));
+      const thumb = up.secure_url.replace("/upload/", "/upload/so_1/").replace(/\.[a-z0-9]+$/i, ".jpg");
+      await fsAddDoc(fsCollection(db, "media"), {
+        code: syncCode, type: "video",
+        url: up.secure_url, pid: up.public_id, thumb: thumb,
+        bytes: up.bytes || file.size,
+        name: (file.name || "").slice(0, 80), created: Date.now()
+      });
+      return true;
+    } else {
+      /* Cloudinary не настроен — старое поведение (короткие клипы в базу) */
+      if (file.size > MAX_VIDEO_B64) {
+        lastMediaError = `видео ${formatSize(file.size)} слишком большое, Cloudinary не настроен (лимит 700 КБ)`;
+        setMediaStatus("⚠️ " + lastMediaError);
+        return false;
+      }
+      const dataUrl = await fileToDataURL(file);
+      if (dataUrl.length > 950_000) { lastMediaError = "видео получилось слишком большим для базы"; setMediaStatus("⚠️ " + lastMediaError); return false; }
+      await fsAddDoc(fsCollection(db, "media"), {
+        code: syncCode, type: "video", mime: file.type,
+        name: (file.name || "").slice(0, 80), created: Date.now(), data: dataUrl
+      });
+      return true;
+    }
+  } catch(e) {
+    lastMediaError = e.message || e.code || "неизвестная ошибка";
+    setMediaStatus("⚠️ Ошибка загрузки: " + lastMediaError);
+    return false;
+  }
+}
+
+async function handleFiles(files) {
+  if (!CLOUD) return;
+  const list = [...files];
+  if (!list.length) return;
+  let ok = 0;
+  const problems = [];
+  for (let i = 0; i < list.length; i++) {
+    lastMediaError = "";
+    if (list.length > 1) setMediaStatus(`Файл ${i + 1} из ${list.length}…`);
+    if (await addMedia(list[i])) ok++;
+    else problems.push(`«${(list[i].name || "файл").slice(0, 40)}» — ${lastMediaError || "причина неизвестна"}`);
+  }
+  if (ok === list.length)
+    setMediaStatus(`✅ Загружено: ${ok} ${plural(ok, ["файл","файла","файлов"])}`);
+  else
+    setMediaStatus(`Загружено ${ok} из ${list.length}. ` + (problems.length ? "Причины: " + problems.join(" · ") : ""));
+}
+
+function renderMedia() {
+  const grid = $("mgrid");
+  grid.innerHTML = "";
+  $("mediaEmpty").style.display = media.length ? "none" : "block";
+  $("mediaCount").textContent = `Галерея — ${media.length} ${plural(media.length, ["файл","файла","файлов"])}`;
+  media.forEach((m, i) => {
+    const t = document.createElement("div");
+    t.className = "tile";
+    if (m.type === "photo") {
+      const im = document.createElement("img");
+      im.src = m.data; im.alt = m.name || "";
+      t.appendChild(im);
+    } else if (m.thumb || m.url) {
+      /* Видео из Cloudinary: миниатюра-кадр, чтобы не качать видео для плитки */
+      const im = document.createElement("img");
+      im.src = m.thumb || ""; im.alt = m.name || "";
+      t.appendChild(im);
+      const pl = document.createElement("span");
+      pl.className = "play"; pl.textContent = "▶";
+      t.appendChild(pl);
+    } else {
+      /* Старое видео из базы (короткий клип) */
+      const v = document.createElement("video");
+      v.src = m.data; v.muted = true; v.preload = "metadata"; v.playsInline = true;
+      t.appendChild(v);
+      const pl = document.createElement("span");
+      pl.className = "play"; pl.textContent = "▶";
+      t.appendChild(pl);
+    }
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = m.type === "photo" ? "Фото" : "Видео";
+    t.appendChild(tag);
+    const del = document.createElement("button");
+    del.className = "tdel"; del.textContent = "✕"; del.title = "Удалить";
+    del.onclick = ev => { ev.stopPropagation(); deleteMedia(m); };
+    t.appendChild(del);
+    t.onclick = () => { viewIndex = i; showViewer(); };
+    grid.appendChild(t);
+  });
+}
+
+async function deleteMedia(m) {
+  if (!m) return;
+  if (!confirm("Удалить этот " + (m.type === "photo" ? "фотоснимок" : "видеофайл") + "?")) return;
+  try {
+    if (m.pid && CLD.ready) {
+      setMediaStatus("⏳ Удаляем видео из Cloudinary…");
+      const okCld = await cloudinaryDestroy(m.pid, "video");
+      if (!okCld) setMediaStatus("⚠️ Файл не удалён из Cloudinary (запись удалена). Сотрите его вручную: Media Library в Cloudinary");
+    }
+    await fsDeleteDoc(fsDoc(db, "media", m.id));
+    setMediaStatus("Удалено");
+    if ($("viewer").style.display !== "none") closeViewer();
+  } catch(e) {
+    setMediaStatus("⚠️ Не удалось удалить: " + (e.code || ""));
+  }
+}
+
+/* ---- Просмотрщик ---- */
+function showViewer() {
+  if (!media.length) { closeViewer(); return; }
+  if (viewIndex < 0) viewIndex = 0;
+  if (viewIndex >= media.length) viewIndex = media.length - 1;
+  const m = media[viewIndex];
+  const body = $("vBody");
+  body.innerHTML = "";
+  if (m.type === "photo") {
+    const im = document.createElement("img");
+    im.src = m.data; im.alt = m.name || "";
+    body.appendChild(im);
+  } else {
+    const v = document.createElement("video");
+    v.src = m.url || m.data; v.controls = true; v.autoplay = true; v.playsInline = true;
+    body.appendChild(v);
+  }
+  const d = m.created ? new Date(m.created) : null;
+  $("vCap").textContent = `${viewIndex + 1} из ${media.length}` +
+    (m.name ? ` · ${m.name}` : "") + (d ? ` · ${d.toLocaleString("ru-RU")}` : "");
+  const multi = media.length > 1;
+  $("vPrev").style.display = multi ? "block" : "none";
+  $("vNext").style.display = multi ? "block" : "none";
+  $("viewer").style.display = "flex";
+}
+function closeViewer() {
+  $("viewer").style.display = "none";
+  $("vBody").innerHTML = "";
+}
+function navViewer(delta) {
+  if (!media.length) return;
+  viewIndex = (viewIndex + delta + media.length) % media.length;
+  showViewer();
+}
+
+ $("vClose").onclick = closeViewer;
+ $("vPrev").onclick = () => navViewer(-1);
+ $("vNext").onclick = () => navViewer(1);
+ $("vDel").onclick = () => { const m = media[viewIndex]; closeViewer(); deleteMedia(m); };
+ $("viewer").onclick = e => { if (e.target === $("viewer")) closeViewer(); };
+document.addEventListener("keydown", e => {
+  if ($("viewer").style.display === "none") return;
+  if (e.key === "Escape") closeViewer();
+  if (e.key === "ArrowLeft") navViewer(-1);
+  if (e.key === "ArrowRight") navViewer(1);
+});
+
+/* ---- Загрузка: клик и drag&drop ---- */
+const dz = $("dropzone");
+dz.onclick = () => $("fileInput").click();
+ $("fileInput").onchange = e => { handleFiles(e.target.files); e.target.value = ""; };
+["dragover", "dragenter"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove("over"); }));
+dz.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+/* ============ 9. ВКЛАДКИ ============ */
+function switchTab(name) {
+  $("tabSched").style.display = name === "sched" ? "block" : "none";
+  $("tabMedia").style.display = name === "media" ? "block" : "none";
+  $("tabBtnSched").classList.toggle("active", name === "sched");
+  $("tabBtnMedia").classList.toggle("active", name === "media");
+}
+ $("tabBtnSched").onclick = () => switchTab("sched");
+ $("tabBtnMedia").onclick = () => switchTab("media");
+
+if (!CLOUD) {
+  dz.style.display = "none";
+  setMediaStatus("⚠️ Облако не подключено — галерея работает только с Firebase");
+}
+
+/* ============ 10. СТАРТ ============ */
+renderHours();
+renderAll();
+if (CLOUD) mediaSubscribe();
+</script>
+</body>
+</html>
