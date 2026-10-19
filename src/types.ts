@@ -26,10 +26,13 @@ export interface MediaItem {
   name: string;
   created: number;
   size?: number;
-  url: string;        // Server URL e.g. /api/media/... or Cloudinary URL or data URL
+  url: string;        // Server URL, object URL, or data URL
   thumb?: string;      // Video poster thumbnail data URL or image URL
+  data?: string;       // Compressed base64 data for photos/offline
+  blob?: Blob;         // Stored binary Blob in IndexedDB for 100% offline playback
   filename?: string;   // Local disk filename if stored on server
   duration?: number;   // Video duration in seconds
+  storageSource?: 'local' | 'server' | 'firebase';
 }
 
 export interface StorageConfig {
