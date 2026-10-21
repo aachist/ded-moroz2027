@@ -271,11 +271,12 @@ export async function pushScheduleRemote(
   schedule: DaySchedule,
   updatedAt: number
 ): Promise<boolean> {
-  const results = await Promise.all([
-    fbSaveSchedule(syncCode, schedule, updatedAt).catch(() => false),
-    serverSaveSchedule(syncCode, schedule, updatedAt),
-  ]);
-  const ok = results.some(Boolean);
+  // Сначала собственный сервер (Vercel API / локальный сервер): он работает без VPN.
+  // Firebase — только запасной вариант, если сервер недоступен.
+  let ok = await serverSaveSchedule(syncCode, schedule, updatedAt);
+  if (!ok) {
+    ok = await fbSaveSchedule(syncCode, schedule, updatedAt).catch(() => false);
+  }
   if (ok) {
     // Не сбрасываем флаг, если за время отправки появилась более новая правка
     try {
@@ -292,11 +293,11 @@ const lastHeal: Record<string, { updatedAt: number; at: number }> = {};
 export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
   const local = await readLocalSchedule(syncCode);
 
-  // Firebase и сервер опрашиваем параллельно, чтобы не ждать таймаут Firebase перед сервером
-  const [fb, srv] = await Promise.all([
-    fbFetchSchedule(syncCode).catch(() => null),
-    serverFetchSchedule(syncCode),
-  ]);
+  // Сначала свой сервер. Firebase опрашиваем, только если сервер недоступен
+  // или ещё пуст (перенос старых данных) — так без VPN нет ожидания таймаута.
+  const srv = await serverFetchSchedule(syncCode);
+  const needFirebase = !srv || (srv.updatedAt === 0 && isEmptySchedule(srv.data));
+  const fb = needFirebase ? await fbFetchSchedule(syncCode).catch(() => null) : null;
 
   // Выбираем самую свежую версию; при равенстве предпочитаем непустую
   let best: RemoteSchedule & { source: 'firebase' | 'server' | 'local' } = { ...local, source: 'local' };
@@ -310,6 +311,26 @@ export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
     const tieButFilled =
       c.updatedAt === best.updatedAt && isEmptySchedule(best.data) && !isEmptySchedule(c.data);
     if (newer || tieButFilled) best = { ...c, source };
+  }
+
+  // Данные без метки времени (старый формат) получают её, чтобы их можно было синхронизировать
+  if (best.updatedAt === 0 && !isEmptySchedule(best.data)) {
+    best = { ...best, updatedAt: Date.now() };
+    writeLocalSchedule(syncCode, best.data, best.updatedAt);
+    try {
+      localStorage.setItem(dirtyKey(syncCode), '1');
+    } catch (e) {}
+    if (best.source === 'local') local.updatedAt = best.updatedAt;
+  }
+
+  // Свой сервер пуст или отстаёт, а у нас (в браузере или Firebase) есть более свежее — переносим туда
+  if (
+    srv &&
+    best.source !== 'server' &&
+    !isEmptySchedule(best.data) &&
+    srv.updatedAt < best.updatedAt
+  ) {
+    serverSaveSchedule(syncCode, best.data, best.updatedAt).catch(() => {});
   }
 
   if (best.source !== 'local') {
