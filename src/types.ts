@@ -31,6 +31,7 @@ export interface MediaItem {
   data?: string;       // Compressed base64 data for photos/offline
   blob?: Blob;         // Stored binary Blob in IndexedDB for 100% offline playback
   filename?: string;   // Local disk filename if stored on server
+  cloudUrl?: string;   // Ссылка на файл в облачном хранилище (Vercel Blob), если он уже выгружен
   duration?: number;   // Video duration in seconds
   storageSource?: 'local' | 'server' | 'firebase';
 }

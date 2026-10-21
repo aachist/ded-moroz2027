@@ -387,24 +387,30 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
     byId.set(m.id, m);
   }
 
-  // 2. Try loading from Firebase (works when VPN is connected)
-  try {
-    const fbItems = await fbFetchMedia(syncCode);
-    for (const item of fbItems) {
-      if (!byId.has(item.id)) byId.set(item.id, item);
-    }
-  } catch (e) {}
-
-  // 3. Try loading from server (if server endpoint exists)
-  try {
-    const res = await fetch(`/api/media-list/${syncCode}`);
-    if (res.ok) {
-      const json = await res.json();
-      for (const item of json.items || []) {
-        if (!byId.has(item.id)) byId.set(item.id, item);
+  // 2–3. Firebase (работает с VPN) и свой сервер (Vercel API) опрашиваем параллельно
+  const serverIds = new Set<string>();
+  const [fbItems, serverItems] = await Promise.all([
+    fbFetchMedia(syncCode).catch(() => [] as MediaItem[]),
+    (async (): Promise<MediaItem[] | null> => {
+      try {
+        const res = await fetch(`/api/media-list/${syncCode}`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        if (!(res.headers.get('content-type') || '').includes('application/json')) return null;
+        const json = await res.json();
+        return Array.isArray(json.items) ? (json.items as MediaItem[]) : [];
+      } catch (e) {
+        return null;
       }
-    }
-  } catch (e) {}
+    })(),
+  ]);
+
+  for (const item of serverItems || []) {
+    serverIds.add(item.id);
+    if (!byId.has(item.id)) byId.set(item.id, item);
+  }
+  for (const item of fbItems) {
+    if (!byId.has(item.id)) byId.set(item.id, item);
+  }
 
   // 4. Склеиваем копии одного и того же фото (одинаковое содержимое, загружены в одну минуту)
   const result: MediaItem[] = [];
@@ -450,6 +456,11 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   }
 
   result.sort((a, b) => (b.created || 0) - (a.created || 0));
+
+  // Если облачный сервер доступен — выгружаем в него файлы, которые есть только в этом браузере
+  if (serverItems !== null) {
+    syncLocalMediaToCloud(syncCode, result, serverIds).catch(() => {});
+  }
   return result;
 }
 
@@ -516,8 +527,8 @@ export async function uploadMediaFile(
       }
     }).catch(() => {});
 
-    // 3. Background attempt to server upload (non-blocking, ignores 404)
-    uploadToServerBackground(file, syncCode, mediaItem).catch(() => {});
+    // 3. Фоновая выгрузка в облако (Vercel Blob), без блокировки интерфейса
+    backgroundUpload(file, syncCode, mediaItem).catch(() => {});
 
     onProgress?.(100);
     return mediaItem;
@@ -549,11 +560,114 @@ export async function uploadMediaFile(
 
   onProgress?.(90);
 
-  // 2. Non-blocking server upload attempt (if server endpoint is active)
-  uploadToServerBackground(file, syncCode, mediaItem).catch(() => {});
+  // 2. Фоновая выгрузка в облако (Vercel Blob), без блокировки интерфейса
+  backgroundUpload(file, syncCode, mediaItem).catch(() => {});
 
   onProgress?.(100);
   return mediaItem;
+}
+
+/* ---------- Облачная выгрузка (Vercel Blob + список в Redis) ---------- */
+const cloudBusy = new Set<string>();
+const cloudFailedAt = new Map<string, number>();
+let cloudQueueRunning = false;
+
+function toServerItem(item: MediaItem, cloudUrl: string) {
+  // Превью видео — небольшая картинка; у фото превью = сам файл
+  const thumb =
+    item.type === 'photo'
+      ? cloudUrl
+      : item.thumb && item.thumb.length < 150_000
+      ? item.thumb
+      : undefined;
+  return {
+    id: item.id,
+    code: item.code,
+    type: item.type,
+    mime: item.mime,
+    name: item.name,
+    created: item.created,
+    size: item.size,
+    duration: item.duration,
+    url: cloudUrl,
+    thumb,
+  };
+}
+
+/** Выгружает файл в Vercel Blob и записывает ссылку в общий список. Возвращает true при успехе. */
+async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): Promise<boolean> {
+  if (cloudBusy.has(item.id)) return false;
+  cloudBusy.add(item.id);
+  try {
+    let body: Blob | null = source || (item.blob instanceof Blob ? item.blob : null);
+    if (!body && item.type === 'photo' && item.data) {
+      body = await (await fetch(item.data)).blob(); // сжатое фото из data URL
+    }
+    if (!body) return false;
+
+    const { upload } = await import('@vercel/blob/client');
+    const contentType = body.type || item.mime || (item.type === 'photo' ? 'image/jpeg' : 'video/mp4');
+    const extFromName = (item.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const ext =
+      item.type === 'photo' ? 'jpg' : extFromName && extFromName.length <= 5 ? extFromName : 'mp4';
+
+    const blob = await upload(`media/${syncCode}/${item.id}.${ext}`, body, {
+      access: 'public',
+      handleUploadUrl: '/api/blob-upload',
+      clientPayload: JSON.stringify({ code: syncCode }),
+      contentType,
+      multipart: body.size > 20 * 1024 * 1024,
+    });
+
+    const res = await fetch(`/api/media-list/${syncCode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(toServerItem(item, blob.url)),
+    });
+    if (!res.ok) throw new Error(`media-list HTTP ${res.status}`);
+
+    item.cloudUrl = blob.url;
+    cloudFailedAt.delete(item.id);
+    idbSaveMedia(item).catch(() => {});
+    return true;
+  } catch (e) {
+    cloudFailedAt.set(item.id, Date.now());
+    return false;
+  } finally {
+    cloudBusy.delete(item.id);
+  }
+}
+
+/** Сначала облако; если оно недоступно (например, локальный запуск) — старый серверный вариант. */
+async function backgroundUpload(file: File, syncCode: string, item: MediaItem): Promise<void> {
+  const ok = await uploadToCloud(syncCode, item, item.type === 'video' ? file : undefined);
+  if (!ok) await uploadToServerBackground(file, syncCode, item);
+}
+
+/**
+ * Догоняющая выгрузка: файлы, которые есть только в этом браузере (например, видео,
+ * загруженные раньше), отправляются в облако, чтобы появиться на других устройствах.
+ * По одному, с паузой 5 минут после неудачи.
+ */
+async function syncLocalMediaToCloud(
+  syncCode: string,
+  items: MediaItem[],
+  serverIds: Set<string>
+): Promise<void> {
+  if (cloudQueueRunning) return;
+  cloudQueueRunning = true;
+  try {
+    for (const it of items) {
+      if (it.cloudUrl || serverIds.has(it.id) || cloudBusy.has(it.id)) continue;
+      const hasPayload = it.blob instanceof Blob || (it.type === 'photo' && !!it.data);
+      if (!hasPayload) continue;
+      const failed = cloudFailedAt.get(it.id);
+      if (failed && Date.now() - failed < 5 * 60 * 1000) continue;
+      await uploadToCloud(syncCode, it);
+    }
+  } finally {
+    cloudQueueRunning = false;
+  }
 }
 
 /**
