@@ -404,8 +404,10 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
     })(),
   ]);
 
+  const serverUrlById = new Map<string, string>();
   for (const item of serverItems || []) {
     serverIds.add(item.id);
+    if (item.url) serverUrlById.set(item.id, item.url);
     if (!byId.has(item.id)) byId.set(item.id, item);
   }
   for (const item of fbItems) {
@@ -456,6 +458,12 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   }
 
   result.sort((a, b) => (b.created || 0) - (a.created || 0));
+
+  // Отмечаем файлы, которые уже лежат в облаке (по списку с сервера)
+  for (const m of result) {
+    const u = serverUrlById.get(m.id);
+    if (u) m.cloudUrl = u;
+  }
 
   // Если облачный сервер доступен — выгружаем в него файлы, которые есть только в этом браузере
   if (serverItems !== null) {
@@ -572,6 +580,39 @@ const cloudBusy = new Set<string>();
 const cloudFailedAt = new Map<string, number>();
 let cloudQueueRunning = false;
 
+/* Статус выгрузки в облако — показывается в галерее, чтобы было видно, что происходит */
+export interface CloudStatus {
+  uploading: string | null; // имя файла, который выгружается сейчас
+  progress: number; // 0..100
+  lastError: string | null;
+  lastOkAt: number | null;
+}
+let cloudStatus: CloudStatus = { uploading: null, progress: 0, lastError: null, lastOkAt: null };
+const cloudListeners = new Set<() => void>();
+export const getCloudStatus = (): CloudStatus => cloudStatus;
+export function subscribeCloudStatus(cb: () => void): () => void {
+  cloudListeners.add(cb);
+  return () => {
+    cloudListeners.delete(cb);
+  };
+}
+function setCloudStatus(patch: Partial<CloudStatus>) {
+  cloudStatus = { ...cloudStatus, ...patch };
+  cloudListeners.forEach((f) => f());
+}
+/** Сбрасывает паузы после неудач, чтобы выгрузка повторилась сразу. */
+export function resetCloudRetries(): void {
+  cloudFailedAt.clear();
+  setCloudStatus({ lastError: null });
+}
+function describeCloudError(e: any): string {
+  const msg = String(e?.message || e || 'неизвестная ошибка');
+  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+    return 'нет связи с облаком (возможно, без VPN адрес Vercel недоступен)';
+  }
+  return msg.slice(0, 160);
+}
+
 function toServerItem(item: MediaItem, cloudUrl: string) {
   // Превью видео — небольшая картинка; у фото превью = сам файл
   const thumb =
@@ -605,6 +646,7 @@ async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): 
     }
     if (!body) return false;
 
+    setCloudStatus({ uploading: item.name || 'файл', progress: 0, lastError: null });
     const { upload } = await import('@vercel/blob/client');
     const contentType = body.type || item.mime || (item.type === 'photo' ? 'image/jpeg' : 'video/mp4');
     const extFromName = (item.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -617,6 +659,7 @@ async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): 
       clientPayload: JSON.stringify({ code: syncCode }),
       contentType,
       multipart: body.size > 20 * 1024 * 1024,
+      onUploadProgress: (e) => setCloudStatus({ progress: Math.round(e.percentage) }),
     });
 
     const res = await fetch(`/api/media-list/${syncCode}`, {
@@ -629,9 +672,15 @@ async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): 
     item.cloudUrl = blob.url;
     cloudFailedAt.delete(item.id);
     idbSaveMedia(item).catch(() => {});
+    setCloudStatus({ uploading: null, progress: 100, lastError: null, lastOkAt: Date.now() });
     return true;
   } catch (e) {
+    console.warn('Cloud upload failed:', item.name, e);
     cloudFailedAt.set(item.id, Date.now());
+    setCloudStatus({
+      uploading: null,
+      lastError: `${item.name || 'файл'}: ${describeCloudError(e)}`,
+    });
     return false;
   } finally {
     cloudBusy.delete(item.id);

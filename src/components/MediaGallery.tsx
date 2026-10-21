@@ -1,6 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
 import { MediaItem } from '../types';
-import { uploadMediaFile, deleteMediaItem, formatFileSize, plural } from '../utils/storage';
+import {
+  uploadMediaFile,
+  deleteMediaItem,
+  formatFileSize,
+  plural,
+  getCloudStatus,
+  subscribeCloudStatus,
+  resetCloudRetries,
+} from '../utils/storage';
 import { generateVideoThumbnail, compressImage } from '../utils/videoThumb';
 import { MediaViewer } from './MediaViewer';
 import {
@@ -139,8 +147,56 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
   const photoCount = mediaList.filter((m) => m.type === 'photo').length;
   const videoCount = mediaList.filter((m) => m.type === 'video').length;
 
+  // Статус облака: что уже выгружено, что нет, и почему
+  const cloud = useSyncExternalStore(subscribeCloudStatus, getCloudStatus);
+  const notInCloud = mediaList.filter((m) => !m.cloudUrl).length;
+
   return (
     <div className="space-y-6">
+      {/* Cloud status */}
+      {mediaList.length > 0 && (
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm flex items-center justify-between gap-3 flex-wrap ${
+            cloud.uploading
+              ? 'bg-blue-50 border-blue-200 text-blue-800'
+              : cloud.lastError
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : notInCloud > 0
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          <div className="min-w-0">
+            {cloud.uploading ? (
+              <span>
+                ☁️ Выгрузка в облако: <b className="break-all">{cloud.uploading}</b> — {cloud.progress}%
+              </span>
+            ) : cloud.lastError ? (
+              <span className="break-words">
+                ⚠️ Не удалось выгрузить в облако — {cloud.lastError}. Файлы пока только на этом устройстве.
+              </span>
+            ) : notInCloud > 0 ? (
+              <span>
+                💾 {notInCloud} {plural(notInCloud, ['файл', 'файла', 'файлов'])} пока только на этом устройстве
+              </span>
+            ) : (
+              <span>☁️ Все файлы в облаке и доступны на других устройствах</span>
+            )}
+          </div>
+          {!cloud.uploading && notInCloud > 0 && (
+            <button
+              onClick={() => {
+                resetCloudRetries();
+                onRefreshMedia();
+              }}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white/80 border border-current/20 hover:bg-white"
+            >
+              Выгрузить сейчас
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Upload Dropzone */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
