@@ -50,12 +50,23 @@ function withTimeout<T>(promise: Promise<T>, ms: number = 3500): Promise<T> {
 /**
  * Fetch schedule from Firebase with timeout
  */
-export async function fbFetchSchedule(code: string): Promise<DaySchedule | null> {
+export interface RemoteSchedule {
+  data: DaySchedule;
+  updatedAt: number;
+}
+
+export async function fbFetchSchedule(code: string): Promise<RemoteSchedule | null> {
   if (!db || !firebaseAvailable) return null;
   try {
     const snap = await withTimeout(getDoc(doc(db, 'schedules', code)), 3500);
     if (snap.exists()) {
-      return snap.data() as DaySchedule;
+      const raw = snap.data() as any;
+      // Новый формат: { days: '<json>', updatedAt }
+      if (typeof raw.days === 'string') {
+        return { data: JSON.parse(raw.days), updatedAt: Number(raw.updatedAt) || 0 };
+      }
+      // Старый формат: документ = само расписание
+      return { data: raw as DaySchedule, updatedAt: 0 };
     }
   } catch (err) {
     // Network blocked or timeout without VPN
@@ -64,14 +75,25 @@ export async function fbFetchSchedule(code: string): Promise<DaySchedule | null>
 }
 
 /**
- * Save schedule to Firebase with timeout
+ * Save schedule to Firebase with timeout.
+ * Расписание хранится как JSON-строка: Firestore не принимает `undefined`
+ * внутри объектов (например, event.note без комментария), из-за чего
+ * раньше запись молча падала.
  */
-export async function fbSaveSchedule(code: string, schedule: DaySchedule): Promise<boolean> {
+export async function fbSaveSchedule(
+  code: string,
+  schedule: DaySchedule,
+  updatedAt: number
+): Promise<boolean> {
   if (!db || !firebaseAvailable) return false;
   try {
-    await withTimeout(setDoc(doc(db, 'schedules', code), schedule), 4000);
+    await withTimeout(
+      setDoc(doc(db, 'schedules', code), { days: JSON.stringify(schedule), updatedAt }),
+      4000
+    );
     return true;
   } catch (err) {
+    console.warn('Firebase schedule save failed:', err);
     return false;
   }
 }
@@ -82,22 +104,25 @@ export async function fbSaveSchedule(code: string, schedule: DaySchedule): Promi
 export async function fbSavePhoto(
   code: string,
   dataUrl: string,
-  name: string
+  name: string,
+  id: string,
+  created: number
 ): Promise<string | null> {
   if (!db || !firebaseAvailable) return null;
   try {
-    const docRef = await withTimeout(
-      addDoc(collection(db, 'media'), {
+    // Тот же id, что и в локальной базе — иначе фото появлялось бы дважды
+    await withTimeout(
+      setDoc(doc(db, 'media', id), {
         code,
         type: 'photo',
         mime: 'image/jpeg',
         name: (name || '').slice(0, 80),
-        created: Date.now(),
+        created,
         data: dataUrl,
       }),
       4000
     );
-    return docRef.id;
+    return id;
   } catch (err) {
     return null;
   }

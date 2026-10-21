@@ -29,7 +29,18 @@ const MEDIA_FILE = path.join(DATA_DIR, 'media.json');
 function loadJson<T>(file: string, fallback: T): T {
   try {
     if (fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, 'utf-8'));
+      const text = fs.readFileSync(file, 'utf-8');
+      if (!text.trim()) return fallback; // пустой файл = нет данных
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        // Файл повреждён: сохраняем копию, чтобы следующая запись не уничтожила данные
+        const backup = `${file}.corrupt-${Date.now()}`;
+        try {
+          fs.copyFileSync(file, backup);
+        } catch (_) {}
+        console.error(`Error loading ${file} (копия: ${backup}):`, e);
+      }
     }
   } catch (e) {
     console.error(`Error loading ${file}:`, e);
@@ -37,11 +48,16 @@ function loadJson<T>(file: string, fallback: T): T {
   return fallback;
 }
 
-function saveJson<T>(file: string, data: T): void {
+function saveJson<T>(file: string, data: T): boolean {
   try {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
+    // Пишем во временный файл и переименовываем — так JSON не повредится при сбое посреди записи
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmp, file);
+    return true;
   } catch (e) {
     console.error(`Error saving ${file}:`, e);
+    return false;
   }
 }
 
@@ -190,18 +206,53 @@ app.delete('/api/media/:filename', (req, res) => {
 });
 
 // Schedule Sync Endpoints
+// В schedules.json: { [code]: { __v: 2, data, updatedAt } }  (старый формат — просто расписание)
+function readScheduleRecord(code: string): { data: any; updatedAt: number } {
+  const schedules = loadJson<Record<string, any>>(SCHEDULES_FILE, {});
+  const rec = schedules[code];
+  if (rec && rec.__v === 2) {
+    return { data: rec.data || {}, updatedAt: Number(rec.updatedAt) || 0 };
+  }
+  return { data: rec || {}, updatedAt: 0 };
+}
+
 app.get('/api/schedule/:code', (req, res) => {
   const code = req.params.code;
-  const schedules = loadJson<Record<string, any>>(SCHEDULES_FILE, {});
-  res.json({ code, data: schedules[code] || {} });
+  const { data, updatedAt } = readScheduleRecord(code);
+  res.set('Cache-Control', 'no-store');
+  res.json({ code, data, updatedAt });
 });
 
 app.post('/api/schedule/:code', (req, res) => {
   const code = req.params.code;
+  const body = req.body;
+
+  // Новый формат { data, updatedAt }; старый клиент присылает расписание целиком
+  const isNew = body && typeof body === 'object' && typeof body.updatedAt === 'number' && body.data;
+  const data = isNew ? body.data : body;
+  const updatedAt = isNew ? body.updatedAt : Date.now();
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return res.status(400).json({ success: false, error: 'Неверный формат расписания' });
+  }
+
+  const current = readScheduleRecord(code);
+  if (updatedAt < current.updatedAt) {
+    // Пришла более старая версия (например, запросы обогнали друг друга) — не затираем свежую
+    return res.status(409).json({ success: false, stale: true, updatedAt: current.updatedAt });
+  }
+  if (updatedAt === current.updatedAt && JSON.stringify(data) === JSON.stringify(current.data)) {
+    // Ничего не изменилось — не трогаем файл (иначе Vite/Tailwind видят "изменение" и перерисовывают страницу)
+    return res.json({ success: true, updated: updatedAt, unchanged: true });
+  }
+
   const schedules = loadJson<Record<string, any>>(SCHEDULES_FILE, {});
-  schedules[code] = req.body;
-  saveJson(SCHEDULES_FILE, schedules);
-  res.json({ success: true, updated: Date.now() });
+  schedules[code] = { __v: 2, data, updatedAt };
+  const saved = saveJson(SCHEDULES_FILE, schedules);
+  if (!saved) {
+    return res.status(500).json({ success: false, error: 'Не удалось записать файл на диск' });
+  }
+  res.json({ success: true, updated: updatedAt });
 });
 
 // Media List Sync Endpoints

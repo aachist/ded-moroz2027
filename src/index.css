@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Не сканировать данные сервера на предмет CSS-классов */
+@source not "../data";
+@source not "../uploads";
+
 @layer base {
   :root {
     --hourH: 48px;

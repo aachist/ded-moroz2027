@@ -4,7 +4,9 @@ import {
   getStoredSyncCode,
   setStoredSyncCode,
   fetchSchedule,
-  saveSchedule,
+  saveScheduleLocal,
+  pushScheduleRemote,
+  requestPersistentStorage,
   fetchMediaList,
 } from './utils/storage';
 import { Header } from './components/Header';
@@ -26,23 +28,47 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState<string>('Проверка связи…');
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
-  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Счётчик правок и число отправок "в полёте": по ним loadData понимает,
+  // что пока он грузил данные, пользователь успел изменить расписание.
+  const editVersionRef = useRef(0);
+  const pendingPushesRef = useRef(0);
+  const syncCodeRef = useRef(syncCode);
+  syncCodeRef.current = syncCode;
 
   // Load schedule and media for current syncCode
   const loadData = useCallback(async (code: string) => {
+    const editsAtStart = editVersionRef.current;
     try {
       setSyncStatus('Синхронизация…');
       const [schedData, mediaData] = await Promise.all([
         fetchSchedule(code),
         fetchMediaList(code),
       ]);
-      setSchedule(schedData);
+
+      if (code !== syncCodeRef.current) return; // код успели сменить
       setMediaList(mediaData);
-      setSyncStatus(`Синхронизировано в ${new Date().toLocaleTimeString('ru-RU')}`);
+
+      const userEditedMeanwhile =
+        editVersionRef.current !== editsAtStart ||
+        saveTimerRef.current !== null ||
+        pendingPushesRef.current > 0;
+
+      if (!userEditedMeanwhile) {
+        // Не пересоздаём состояние, если ничего не изменилось
+        setSchedule((prev) =>
+          JSON.stringify(prev) === JSON.stringify(schedData) ? prev : schedData
+        );
+        setSyncStatus(`Синхронизировано в ${new Date().toLocaleTimeString('ru-RU')}`);
+      }
     } catch (err) {
       console.error(err);
       setSyncStatus('Данные сохранены локально');
     }
+  }, []);
+
+  useEffect(() => {
+    requestPersistentStorage();
   }, []);
 
   useEffect(() => {
@@ -57,21 +83,32 @@ export default function App() {
     return () => clearInterval(interval);
   }, [syncCode, loadData]);
 
-  // Update schedule handler with automatic push
+  // Update schedule handler: сохраняем в браузере сразу, на сервер отправляем с небольшой задержкой
   const handleUpdateSchedule = (newSchedule: DaySchedule) => {
+    editVersionRef.current += 1;
     setSchedule(newSchedule);
     setSyncStatus('Сохранение…');
+
+    const code = syncCode;
+    const updatedAt = saveScheduleLocal(code, newSchedule);
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
     }
 
     saveTimerRef.current = setTimeout(async () => {
-      const ok = await saveSchedule(syncCode, newSchedule);
-      if (ok) {
-        setSyncStatus(`✅ Сохранено в ${new Date().toLocaleTimeString('ru-RU')}`);
-      } else {
-        setSyncStatus('Сохранено локально в браузере');
+      saveTimerRef.current = null;
+      pendingPushesRef.current += 1;
+      try {
+        const ok = await pushScheduleRemote(code, newSchedule, updatedAt);
+        const time = new Date().toLocaleTimeString('ru-RU');
+        setSyncStatus(
+          ok
+            ? `✅ Сохранено в ${time}`
+            : `⚠️ Сохранено только в этом браузере (${time}) — нет связи с сервером`
+        );
+      } finally {
+        pendingPushesRef.current -= 1;
       }
     }, 400);
   };

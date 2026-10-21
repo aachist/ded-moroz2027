@@ -1,6 +1,13 @@
 import { DaySchedule, MediaItem, StorageConfig } from '../types';
 import { compressImage } from './videoThumb';
-import { fbFetchSchedule, fbSaveSchedule, fbSavePhoto, fbFetchMedia, fbDeleteMedia } from './firebaseSync';
+import {
+  fbFetchSchedule,
+  fbSaveSchedule,
+  fbSavePhoto,
+  fbFetchMedia,
+  fbDeleteMedia,
+  RemoteSchedule,
+} from './firebaseSync';
 
 const SYNC_CODE_KEY = 'syncCode';
 const SCHEDULE_KEY = 'weekSchedule';
@@ -63,14 +70,25 @@ export function plural(n: number, forms: [string, string, string]): string {
 /* ================= IndexedDB Local-First Database ================= */
 const DB_NAME = 'rasp_media_db_v2';
 const STORE_NAME = 'media_items';
+const SCHEDULE_STORE = 'schedules';
+
+// Просим браузер не вычищать данные сайта при нехватке места
+export function requestPersistentStorage(): void {
+  try {
+    navigator.storage?.persist?.().catch(() => {});
+  } catch (e) {}
+}
 
 function openIndexedDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(SCHEDULE_STORE)) {
+        db.createObjectStore(SCHEDULE_STORE, { keyPath: 'code' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -130,76 +148,229 @@ export async function idbDeleteMedia(id: string): Promise<void> {
 }
 
 /* ================= Schedule Sync (Multi-tier: Local -> Server -> Firebase) ================= */
-export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
-  // 1. Check localStorage first for instant render
-  let currentSchedule: DaySchedule = {};
-  try {
-    const local = localStorage.getItem(SCHEDULE_KEY);
-    if (local) {
-      currentSchedule = JSON.parse(local);
-    }
-  } catch (e) {}
+// У каждой копии расписания есть метка времени updatedAt. При загрузке выигрывает
+// самая свежая версия (локальная / Firebase / сервер), а не "первая, что ответила".
+// Раньше удалённая (часто устаревшая) копия затирала только что внесённые правки.
+const scheduleKey = (code: string) => `${SCHEDULE_KEY}:${code}`;
+const dirtyKey = (code: string) => `${SCHEDULE_KEY}:dirty:${code}`;
 
-  // 2. Try Firebase (if reachable with VPN)
-  try {
-    const fbData = await fbFetchSchedule(syncCode);
-    if (fbData && Object.keys(fbData).length > 0) {
-      localStorage.setItem(SCHEDULE_KEY, JSON.stringify(fbData));
-      return fbData;
-    }
-  } catch (e) {}
-
-  // 3. Try server endpoint
-  try {
-    const res = await fetch(`/api/schedule/${syncCode}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.data && Object.keys(json.data).length > 0) {
-        localStorage.setItem(SCHEDULE_KEY, JSON.stringify(json.data));
-        return json.data;
-      }
-    }
-  } catch (e) {}
-
-  return currentSchedule;
+function isEmptySchedule(d: DaySchedule | undefined | null): boolean {
+  return !d || Object.keys(d).length === 0;
 }
 
-export async function saveSchedule(syncCode: string, schedule: DaySchedule): Promise<boolean> {
-  // 1. Always save locally immediately
+function readLocalStorageSchedule(code: string): RemoteSchedule {
   try {
-    localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule));
+    const raw = localStorage.getItem(scheduleKey(code));
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p.updatedAt === 'number' && p.data && typeof p.data === 'object') {
+        return { data: p.data, updatedAt: p.updatedAt };
+      }
+    }
+    // Миграция со старого общего ключа
+    const legacy = localStorage.getItem(SCHEDULE_KEY);
+    if (legacy) {
+      return { data: JSON.parse(legacy), updatedAt: 0 };
+    }
   } catch (e) {}
+  return { data: {}, updatedAt: 0 };
+}
 
-  // 2. Push to Firebase in background
-  fbSaveSchedule(syncCode, schedule).catch(() => {});
+async function idbReadSchedule(code: string): Promise<RemoteSchedule | null> {
+  try {
+    const db = await openIndexedDb();
+    return await new Promise((resolve) => {
+      const req = db.transaction(SCHEDULE_STORE, 'readonly').objectStore(SCHEDULE_STORE).get(code);
+      req.onsuccess = () => {
+        const r = req.result;
+        resolve(r && r.data ? { data: r.data, updatedAt: Number(r.updatedAt) || 0 } : null);
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    return null;
+  }
+}
 
-  // 3. Push to server in background
-  fetch(`/api/schedule/${syncCode}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(schedule),
-  }).catch(() => {});
+async function idbWriteSchedule(code: string, data: DaySchedule, updatedAt: number): Promise<void> {
+  try {
+    const db = await openIndexedDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(SCHEDULE_STORE, 'readwrite');
+      tx.objectStore(SCHEDULE_STORE).put({ code, data, updatedAt });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch (e) {
+    console.warn('IDB schedule write failed:', e);
+  }
+}
 
-  return true;
+/** Читает расписание из IndexedDB и localStorage и возвращает более свежую копию. */
+async function readLocalSchedule(code: string): Promise<RemoteSchedule> {
+  const ls = readLocalStorageSchedule(code);
+  const idb = await idbReadSchedule(code);
+  if (idb && (idb.updatedAt > ls.updatedAt || (idb.updatedAt === ls.updatedAt && !isEmptySchedule(idb.data)))) {
+    return idb;
+  }
+  return ls;
+}
+
+function writeLocalSchedule(code: string, data: DaySchedule, updatedAt: number): void {
+  try {
+    localStorage.setItem(scheduleKey(code), JSON.stringify({ data, updatedAt }));
+  } catch (e) {
+    console.warn('localStorage write failed:', e);
+  }
+  idbWriteSchedule(code, data, updatedAt);
+}
+
+/** Мгновенно сохраняет расписание в браузере и помечает, что его ещё надо отправить на сервер. */
+export function saveScheduleLocal(syncCode: string, schedule: DaySchedule): number {
+  const updatedAt = Date.now();
+  writeLocalSchedule(syncCode, schedule, updatedAt);
+  try {
+    localStorage.setItem(dirtyKey(syncCode), '1');
+  } catch (e) {}
+  return updatedAt;
+}
+
+async function serverFetchSchedule(code: string): Promise<RemoteSchedule | null> {
+  try {
+    const res = await fetch(`/api/schedule/${code}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    if (!(res.headers.get('content-type') || '').includes('application/json')) return null;
+    const json = await res.json();
+    if (!json || typeof json.data !== 'object' || json.data === null) return null;
+    return { data: json.data, updatedAt: Number(json.updatedAt) || 0 };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function serverSaveSchedule(code: string, schedule: DaySchedule, updatedAt: number): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/schedule/${code}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: schedule, updatedAt }),
+    });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Отправляет расписание в Firebase и на сервер.
+ * Возвращает true, если хотя бы одно удалённое хранилище подтвердило запись.
+ */
+export async function pushScheduleRemote(
+  syncCode: string,
+  schedule: DaySchedule,
+  updatedAt: number
+): Promise<boolean> {
+  const results = await Promise.all([
+    fbSaveSchedule(syncCode, schedule, updatedAt).catch(() => false),
+    serverSaveSchedule(syncCode, schedule, updatedAt),
+  ]);
+  const ok = results.some(Boolean);
+  if (ok) {
+    // Не сбрасываем флаг, если за время отправки появилась более новая правка
+    try {
+      if ((await readLocalSchedule(syncCode)).updatedAt <= updatedAt) {
+        localStorage.removeItem(dirtyKey(syncCode));
+      }
+    } catch (e) {}
+  }
+  return ok;
+}
+
+const lastHeal: Record<string, { updatedAt: number; at: number }> = {};
+
+export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
+  const local = await readLocalSchedule(syncCode);
+
+  // Firebase и сервер опрашиваем параллельно, чтобы не ждать таймаут Firebase перед сервером
+  const [fb, srv] = await Promise.all([
+    fbFetchSchedule(syncCode).catch(() => null),
+    serverFetchSchedule(syncCode),
+  ]);
+
+  // Выбираем самую свежую версию; при равенстве предпочитаем непустую
+  let best: RemoteSchedule & { source: 'firebase' | 'server' | 'local' } = { ...local, source: 'local' };
+  const candidates: Array<[RemoteSchedule | null, 'firebase' | 'server']> = [
+    [fb, 'firebase'],
+    [srv, 'server'],
+  ];
+  for (const [c, source] of candidates) {
+    if (!c) continue;
+    const newer = c.updatedAt > best.updatedAt;
+    const tieButFilled =
+      c.updatedAt === best.updatedAt && isEmptySchedule(best.data) && !isEmptySchedule(c.data);
+    if (newer || tieButFilled) best = { ...c, source };
+  }
+
+  if (best.source !== 'local') {
+    writeLocalSchedule(syncCode, best.data, best.updatedAt);
+  } else {
+    // Локальная версия самая свежая — догоняем удалённые хранилища, если они отстали
+    let dirty = false;
+    try {
+      dirty = localStorage.getItem(dirtyKey(syncCode)) === '1';
+    } catch (e) {}
+    const behind = [fb, srv].some((r) => r && r.updatedAt < local.updatedAt);
+    if (local.updatedAt > 0 && (dirty || behind)) {
+      // Не чаще раза в 5 минут для одной и той же версии, иначе при недоступном Firebase
+      // каждый опрос (раз в 20 с) заново отправлял бы данные
+      const last = lastHeal[syncCode];
+      const now = Date.now();
+      if (!last || last.updatedAt !== local.updatedAt || now - last.at > 5 * 60 * 1000) {
+        lastHeal[syncCode] = { updatedAt: local.updatedAt, at: now };
+        pushScheduleRemote(syncCode, local.data, local.updatedAt).catch(() => {});
+      }
+    }
+  }
+
+  return best.data;
+}
+
+/** Совместимость: сохранить локально и отправить удалённо. */
+export async function saveSchedule(syncCode: string, schedule: DaySchedule): Promise<boolean> {
+  const updatedAt = saveScheduleLocal(syncCode, schedule);
+  return pushScheduleRemote(syncCode, schedule, updatedAt);
 }
 
 /* ================= Media API (100% Guaranteed Local-First with Background Sync) ================= */
+/**
+ * Подпись фото для поиска дублей: старая версия сохраняла одно фото под двумя id
+ * (локальным и сгенерированным Firebase). Содержимое у них одинаковое.
+ */
+function photoSignature(m: MediaItem): string | null {
+  if (m.type !== 'photo') return null;
+  const d = m.data || m.url || '';
+  if (!d) return null;
+  return `${d.length}:${d.slice(0, 120)}:${d.slice(-120)}`;
+}
+
+// id показанного элемента -> его скрытые копии (чтобы удаление убирало и их тоже)
+const mediaAliases = new Map<string, MediaItem[]>();
+
 export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   // 1. Load immediately from IndexedDB
   const localItems = await idbGetMediaList(syncCode);
-  const map = new Map<string, MediaItem>();
+  const localIds = new Set(localItems.map((m) => m.id));
+  const byId = new Map<string, MediaItem>();
   for (const m of localItems) {
-    map.set(m.id, m);
+    byId.set(m.id, m);
   }
 
   // 2. Try loading from Firebase (works when VPN is connected)
   try {
     const fbItems = await fbFetchMedia(syncCode);
     for (const item of fbItems) {
-      if (!map.has(item.id)) {
-        map.set(item.id, item);
-        idbSaveMedia(item).catch(() => {});
-      }
+      if (!byId.has(item.id)) byId.set(item.id, item);
     }
   } catch (e) {}
 
@@ -209,15 +380,54 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
     if (res.ok) {
       const json = await res.json();
       for (const item of json.items || []) {
-        if (!map.has(item.id)) {
-          map.set(item.id, item);
-          idbSaveMedia(item).catch(() => {});
-        }
+        if (!byId.has(item.id)) byId.set(item.id, item);
       }
     }
   } catch (e) {}
 
-  const result = Array.from(map.values());
+  // 4. Склеиваем копии одного и того же фото (одинаковое содержимое, загружены в одну минуту)
+  const result: MediaItem[] = [];
+  const bySig = new Map<string, MediaItem[]>();
+  const aliases = new Map<string, MediaItem[]>();
+
+  for (const m of byId.values()) {
+    const sig = photoSignature(m);
+    const twin = sig
+      ? (bySig.get(sig) || []).find((k) => Math.abs((k.created || 0) - (m.created || 0)) < 60_000)
+      : undefined;
+
+    if (!sig || !twin) {
+      result.push(m);
+      if (sig) bySig.set(sig, [...(bySig.get(sig) || []), m]);
+      continue;
+    }
+
+    // Предпочитаем вариант из Firebase: он есть в облаке и совпадает на всех устройствах
+    const keepNew = m.storageSource === 'firebase' && twin.storageSource !== 'firebase';
+    const winner = keepNew ? m : twin;
+    const loser = keepNew ? twin : m;
+
+    if (keepNew) {
+      result[result.indexOf(twin)] = m;
+      bySig.set(sig, (bySig.get(sig) || []).map((k) => (k === twin ? m : k)));
+    }
+    const carried = aliases.get(loser.id) || [];
+    aliases.delete(loser.id);
+    aliases.set(winner.id, [...(aliases.get(winner.id) || []), loser, ...carried]);
+  }
+
+  // 5. Убираем копии из локальной базы и запоминаем новые элементы
+  mediaAliases.clear();
+  aliases.forEach((v, k) => mediaAliases.set(k, v));
+  aliases.forEach((dups) => {
+    for (const d of dups) {
+      if (localIds.has(d.id)) idbDeleteMedia(d.id).catch(() => {});
+    }
+  });
+  for (const m of result) {
+    if (!localIds.has(m.id)) idbSaveMedia(m).catch(() => {});
+  }
+
   result.sort((a, b) => (b.created || 0) - (a.created || 0));
   return result;
 }
@@ -279,7 +489,7 @@ export async function uploadMediaFile(
     onProgress?.(90);
 
     // 2. Background sync to Firebase if available (with VPN)
-    fbSavePhoto(syncCode, photoDataUrl, file.name).then((fbId) => {
+    fbSavePhoto(syncCode, photoDataUrl, file.name, id, mediaItem.created).then((fbId) => {
       if (fbId) {
         mediaItem.storageSource = 'firebase';
       }
@@ -362,16 +572,21 @@ async function uploadToServerBackground(file: File, syncCode: string, item: Medi
  * Deletes media item from IndexedDB, server, and Firebase
  */
 export async function deleteMediaItem(syncCode: string, item: MediaItem): Promise<boolean> {
-  // 1. Delete from IndexedDB immediately
-  await idbDeleteMedia(item.id);
+  // Вместе с фото удаляем его скрытые копии (дубли от старых загрузок)
+  const copies = mediaAliases.get(item.id) || [];
+  mediaAliases.delete(item.id);
+  for (const target of [item, ...copies]) {
+    // 1. Delete from IndexedDB immediately
+    await idbDeleteMedia(target.id);
 
-  // 2. Delete from Firebase
-  fbDeleteMedia(item.id).catch(() => {});
+    // 2. Delete from Firebase
+    fbDeleteMedia(target.id).catch(() => {});
 
-  // 3. Delete from server
-  fetch(`/api/media-list/${syncCode}/${item.id}`, { method: 'DELETE' }).catch(() => {});
-  if (item.filename) {
-    fetch(`/api/media/${item.filename}`, { method: 'DELETE' }).catch(() => {});
+    // 3. Delete from server
+    fetch(`/api/media-list/${syncCode}/${target.id}`, { method: 'DELETE' }).catch(() => {});
+    if (target.filename) {
+      fetch(`/api/media/${target.filename}`, { method: 'DELETE' }).catch(() => {});
+    }
   }
 
   return true;
