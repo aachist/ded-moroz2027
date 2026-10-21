@@ -19,7 +19,7 @@ export default async function handler(req: any, res: any) {
     const json = await handleUpload({
       body: req.body as HandleUploadBody,
       request: req,
-      onBeforeGenerateToken: async (_pathname, clientPayload) => {
+      onBeforeGenerateToken: async (pathname, clientPayload) => {
         let code = '';
         try {
           code = JSON.parse(clientPayload || '{}').code;
@@ -27,10 +27,17 @@ export default async function handler(req: any, res: any) {
         if (!CODE_RE.test(String(code))) {
           throw new Error('Неверный код синхронизации');
         }
+        // Писать можно только в свою папку (иначе при перезаписи можно затереть чужие файлы)
+        if (!pathname.startsWith(`media/${code}/`) || pathname.includes('..')) {
+          throw new Error('Недопустимый путь файла');
+        }
         return {
           allowedContentTypes: ['video/*', 'image/*'],
           maximumSizeInBytes: MAX_SIZE,
-          addRandomSuffix: true,
+          // Постоянное имя media/<код>/<id>.<расширение>: если два устройства выгрузят один файл
+          // одновременно, он перезапишется, а не продублируется (экономим квоту Blob).
+          addRandomSuffix: false,
+          allowOverwrite: true,
         };
       },
     });
