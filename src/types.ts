@@ -12,6 +12,7 @@ export interface ActivityTypeConfig {
   color: string;
   bgLight: string;
   textColor: string;
+  legacy?: boolean; // старый вид: показывается у уже созданных записей, но не предлагается при создании новых
 }
 
 export interface DaySchedule {
@@ -32,6 +33,8 @@ export interface MediaItem {
   blob?: Blob;         // Stored binary Blob in IndexedDB for 100% offline playback
   filename?: string;   // Local disk filename if stored on server
   cloudUrl?: string;   // Ссылка на файл в облачном хранилище (Vercel Blob), если он уже выгружен
+  caption?: string;    // Подпись к фото/видео
+  captionAt?: number;  // Когда подпись изменена (для выбора более свежей версии при синхронизации)
   duration?: number;   // Video duration in seconds
   storageSource?: 'local' | 'server' | 'firebase';
 }

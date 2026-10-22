@@ -8,6 +8,7 @@ import {
   getCloudStatus,
   subscribeCloudStatus,
   resetCloudRetries,
+  setMediaCaption,
 } from '../utils/storage';
 import { generateVideoThumbnail, compressImage } from '../utils/videoThumb';
 import { MediaViewer } from './MediaViewer';
@@ -135,6 +136,15 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
       }
     } catch (e) {
       showStatus('Не удалось удалить файл', 'err');
+    }
+  };
+
+  const handleCaption = async (item: MediaItem, caption: string) => {
+    try {
+      await setMediaCaption(syncCode, item, caption);
+      onRefreshMedia();
+    } catch (e) {
+      showStatus('Не удалось сохранить подпись', 'err');
     }
   };
 
@@ -386,7 +396,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                   {m.type === 'photo' ? (
                     <img
                       src={m.thumb || m.url}
-                      alt={m.name}
+                      alt={m.caption || ""}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       loading="lazy"
                     />
@@ -395,7 +405,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                       {m.thumb ? (
                         <img
                           src={m.thumb}
-                          alt={m.name}
+                          alt={m.caption || ""}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 opacity-90"
                           loading="lazy"
                         />
@@ -417,20 +427,13 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                     </div>
                   )}
 
-                  {/* Top-Left Tag Badge */}
-                  <span className="absolute top-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
-                    {m.type === 'photo' ? (
-                      <>
-                        <ImageIcon className="w-2.5 h-2.5" />
-                        <span>Фото</span>
-                      </>
-                    ) : (
-                      <>
-                        <Film className="w-2.5 h-2.5" />
-                        <span>Видео</span>
-                      </>
-                    )}
-                  </span>
+                  {/* Метка только у видео (у фото никаких надписей) */}
+                  {m.type === 'video' && (
+                    <span className="absolute top-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
+                      <Film className="w-2.5 h-2.5" />
+                      <span>Видео</span>
+                    </span>
+                  )}
 
                   {/* Delete Button */}
                   <button
@@ -446,17 +449,19 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
 
-                  {/* Bottom Size / Name Badge */}
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-white flex items-end justify-between leading-tight opacity-90">
-                    <span className="text-[11px] truncate font-medium max-w-[70%]">
-                      {m.name || 'Файл'}
-                    </span>
-                    {m.size ? (
-                      <span className="text-[9px] font-mono opacity-80 shrink-0">
-                        {formatFileSize(m.size)}
+                  {/* Bottom: подпись и размер (имя файла не показываем) */}
+                  {(m.caption || m.size) && (
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-white flex items-end justify-between gap-2 leading-tight opacity-90">
+                      <span className="text-[11px] font-medium line-clamp-2 break-words">
+                        {m.caption || ''}
                       </span>
-                    ) : null}
-                  </div>
+                      {m.size ? (
+                        <span className="text-[9px] font-mono opacity-80 shrink-0">
+                          {formatFileSize(m.size)}
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -472,6 +477,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
           onClose={() => setActiveViewerIndex(null)}
           onNavigate={(newIdx) => setActiveViewerIndex(newIdx)}
           onDelete={handleDelete}
+          onUpdateCaption={handleCaption}
         />
       )}
     </div>

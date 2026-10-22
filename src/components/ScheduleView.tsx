@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DaySchedule, ScheduleEvent } from '../types';
-import { ACTIVITY_TYPES } from '../constants/types';
+import { ACTIVITY_TYPES, SELECTABLE_TYPES } from '../constants/types';
 import { Timeline } from './Timeline';
 import { Plus, Trash2, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, PieChart } from 'lucide-react';
 
@@ -32,19 +32,41 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 }) => {
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
-  const [selectedType, setSelectedType] = useState('work');
+  const [selectedType, setSelectedType] = useState('kids');
   const [note, setNote] = useState('');
   const [message, setMessage] = useState<{ text: string; type: 'ok' | 'warn' | 'err' } | null>(null);
 
-  // Generate 7 days starting from 1 day before today or rolling from current week
+  // Окно из 7 дней. Если выбранная дата выходит за его пределы (стрелками или через выбор даты),
+  // окно сдвигается так, чтобы выбранный день всегда был виден.
+  const startOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+  const addDays = (d: Date, n: number) => {
+    const x = new Date(d);
+    x.setDate(x.getDate() + n);
+    return x;
+  };
+
+  const [windowStart, setWindowStart] = useState<Date>(() => startOfDay(new Date()));
+  const selDay = startOfDay(selectedDate);
+  let shownStart = windowStart;
+  if (selDay.getTime() < windowStart.getTime()) shownStart = selDay;
+  else if (selDay.getTime() > addDays(windowStart, 6).getTime()) shownStart = addDays(selDay, -6);
+
+  useEffect(() => {
+    if (shownStart.getTime() !== windowStart.getTime()) setWindowStart(shownStart);
+  }, [shownStart.getTime()]);
+
   const daysList: Date[] = [];
-  const base = new Date();
-  base.setHours(0, 0, 0, 0);
   for (let i = 0; i < 7; i++) {
-    const d = new Date(base);
-    d.setDate(base.getDate() + i);
-    daysList.push(d);
+    daysList.push(addDays(shownStart, i));
   }
+  const rangeLabel = `${daysList[0].toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+  })} — ${daysList[6].toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}`;
 
   const selectedKey = formatDateKey(selectedDate);
   const currentEvents: ScheduleEvent[] = schedule[selectedKey] || [];
@@ -135,6 +157,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Диапазон отображаемых дат + быстрый переход */}
+      <div className="flex items-center justify-between flex-wrap gap-2 -mb-3">
+        <div className="text-sm font-semibold text-slate-700">{rangeLabel}</div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedDate(startOfDay(new Date()))}
+            className="px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer"
+          >
+            Сегодня
+          </button>
+          <input
+            type="date"
+            value={formatDateKey(selectedDate)}
+            onChange={(e) => {
+              const [y, m, d] = e.target.value.split('-').map(Number);
+              if (y && m && d) setSelectedDate(new Date(y, m - 1, d));
+            }}
+            className="border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            title="Перейти к дате"
+          />
+        </div>
+      </div>
+
       {/* 7-Days Selector */}
       <div className="flex items-center justify-between gap-1 sm:gap-2 overflow-x-auto pb-1 scrollbar-none">
         <button
@@ -171,6 +217,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   {d.toLocaleDateString('ru-RU', { weekday: 'short' })}
                 </span>
                 <span className="block text-xl font-bold leading-tight">{d.getDate()}</span>
+                <span className="block text-[10px] opacity-70">
+                  {d.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')}
+                </span>
                 {isToday && (
                   <span
                     className={`block text-[9px] font-bold ${
@@ -247,13 +296,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           </div>
 
           <div className="flex flex-col gap-1 min-w-[140px]">
-            <label className="text-xs font-semibold text-slate-500">Вид занятости</label>
+            <label className="text-xs font-semibold text-slate-500">Вид праздника</label>
             <select
               value={selectedType}
               onChange={(e) => setSelectedType(e.target.value)}
               className="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700 cursor-pointer"
             >
-              {Object.entries(ACTIVITY_TYPES).map(([k, cfg]) => (
+              {SELECTABLE_TYPES.map(([k, cfg]) => (
                 <option key={k} value={k}>
                   {cfg.name}
                 </option>
@@ -267,7 +316,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Например: лекция, бассейн, отчёт"
+              placeholder="Например: адрес, имя ребёнка, пожелания"
               className="border border-slate-200 rounded-xl px-3 py-2 text-sm bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
             />
           </div>
@@ -314,7 +363,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
       {/* Legend */}
       <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 py-1">
-        {Object.entries(ACTIVITY_TYPES).map(([k, cfg]) => (
+        {SELECTABLE_TYPES.map(([k, cfg]) => (
           <div
             key={k}
             className="flex items-center gap-1.5 text-xs text-slate-600 font-medium px-2 py-1 rounded-lg bg-white/60 border border-slate-200/60 shadow-2xs"

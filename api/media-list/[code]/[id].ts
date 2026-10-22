@@ -1,12 +1,15 @@
 /**
- * Vercel Function: удаление элемента из списка медиа и его файла из Vercel Blob.
- *   DELETE /api/media-list/:code/:id
+ * Vercel Function: операции над одним элементом списка медиа.
+ *   DELETE /api/media-list/:code/:id  — удаляет запись и файл из Vercel Blob и оставляет «надгробие»,
+ *                                       чтобы удаление дошло до остальных устройств
+ *   PATCH  /api/media-list/:code/:id  — задаёт подпись { caption, captionAt }
  */
 import process from 'node:process';
 import { del } from '@vercel/blob';
 
 const CODE_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const ID_RE = /^[A-Za-z0-9_.-]{1,80}$/;
+const MAX_CAPTION = 300;
 const BLOB_HOST_RE = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//i;
 
 async function redis(cmd: Array<string | number>): Promise<any> {
@@ -26,8 +29,8 @@ async function redis(cmd: Array<string | number>): Promise<any> {
 export default async function handler(req: any, res: any) {
   res.setHeader('Cache-Control', 'no-store');
 
-  if (req.method !== 'DELETE') {
-    res.setHeader('Allow', 'DELETE');
+  if (req.method !== 'DELETE' && req.method !== 'PATCH') {
+    res.setHeader('Allow', 'DELETE, PATCH');
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -37,9 +40,34 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'Неверные параметры' });
   }
   const key = `media:${code}`;
+  const delKey = `media-del:${code}`;
 
   try {
-    // Узнаём ссылку на файл, чтобы удалить его из Blob
+    if (req.method === 'PATCH') {
+      const b = req.body;
+      if (!b || typeof b !== 'object' || typeof b.caption !== 'string') {
+        return res.status(400).json({ error: 'Неверный формат подписи' });
+      }
+      if (Number(await redis(['HEXISTS', delKey, id])) === 1) {
+        return res.status(410).json({ error: 'Файл удалён' });
+      }
+      const raw = await redis(['HGET', key, id]);
+      if (!raw) {
+        // Файл ещё не выгружен в облако — клиент повторит позже
+        return res.status(404).json({ error: 'Файл не найден' });
+      }
+      const item = JSON.parse(raw);
+      const at = Number(b.captionAt) || Date.now();
+      if (at >= (Number(item.captionAt) || 0)) {
+        const text = b.caption.trim().slice(0, MAX_CAPTION);
+        item.caption = text || undefined;
+        item.captionAt = at;
+        await redis(['HSET', key, id, JSON.stringify(item)]);
+      }
+      return res.status(200).json({ success: true });
+    }
+
+    // DELETE: узнаём ссылку на файл, чтобы удалить его из Blob
     const raw = await redis(['HGET', key, id]);
     if (raw) {
       try {
@@ -53,12 +81,14 @@ export default async function handler(req: any, res: any) {
       }
     }
     await redis(['HDEL', key, id]);
+    // «Надгробие»: остальные устройства увидят удаление и уберут файл у себя
+    await redis(['HSET', delKey, id, Date.now()]);
     return res.status(200).json({ success: true });
   } catch (e: any) {
     if (e?.message === 'NOT_CONFIGURED') {
       return res.status(503).json({ error: 'Хранилище не подключено (нет переменных Redis)' });
     }
-    console.error('media delete error:', e);
+    console.error('media item api error:', e);
     return res.status(500).json({ error: 'Ошибка хранилища' });
   }
 }

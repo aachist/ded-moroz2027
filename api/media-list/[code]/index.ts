@@ -6,10 +6,12 @@
  * Сами файлы лежат в Vercel Blob, здесь только ссылки и подписи.
  */
 import process from 'node:process';
+import { del } from '@vercel/blob';
 
 const CODE_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const ID_RE = /^[A-Za-z0-9_.-]{1,80}$/;
 const MAX_ITEM = 200_000; // метаданные одного файла (вместе с превью видео)
+const MAX_CAPTION = 300;
 const BLOB_HOST_RE = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//i;
 
 async function redis(cmd: Array<string | number>): Promise<any> {
@@ -34,6 +36,7 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'Неверный код синхронизации' });
   }
   const key = `media:${code}`;
+  const delKey = `media-del:${code}`; // «надгробия»: id удалённых файлов, чтобы удаление дошло до всех устройств
 
   try {
     if (req.method === 'GET') {
@@ -44,7 +47,8 @@ export default async function handler(req: any, res: any) {
           items.push(JSON.parse(flat[i]));
         } catch {}
       }
-      return res.status(200).json({ items });
+      const deleted: string[] = (await redis(['HKEYS', delKey])) || [];
+      return res.status(200).json({ items, deleted });
     }
 
     if (req.method === 'POST') {
@@ -59,11 +63,23 @@ export default async function handler(req: any, res: any) {
       if (!BLOB_HOST_RE.test(String(b.url ?? ''))) {
         return res.status(400).json({ error: 'Неверная ссылка на файл' });
       }
+
+      // Файл уже удалён на другом устройстве: не возвращаем его и убираем только что загруженное
+      if (Number(await redis(['HEXISTS', delKey, String(b.id)])) === 1) {
+        try {
+          await del(String(b.url));
+        } catch (e) {
+          console.warn('blob delete (tombstoned) failed:', e);
+        }
+        return res.status(410).json({ error: 'Файл удалён' });
+      }
+
       const thumbOk =
         typeof b.thumb === 'string' &&
         (BLOB_HOST_RE.test(b.thumb) || (b.thumb.startsWith('data:image/') && b.thumb.length < 150_000));
 
       // Сохраняем только нужные поля (без data/blob и прочего лишнего)
+      const caption = typeof b.caption === 'string' ? b.caption.slice(0, MAX_CAPTION) : undefined;
       const item = {
         id: String(b.id),
         code,
@@ -75,8 +91,22 @@ export default async function handler(req: any, res: any) {
         duration: Number(b.duration) || undefined,
         url: String(b.url),
         thumb: thumbOk ? b.thumb : undefined,
+        caption,
+        captionAt: caption !== undefined ? Number(b.captionAt) || Date.now() : undefined,
         storageSource: 'server',
       };
+      // Не затираем более свежую подпись, если запись уже есть (например, файл выгрузило второе устройство)
+      try {
+        const prevRaw = await redis(['HGET', key, item.id]);
+        if (prevRaw) {
+          const prev = JSON.parse(prevRaw);
+          if ((Number(prev.captionAt) || 0) > (Number(item.captionAt) || 0)) {
+            item.caption = prev.caption;
+            item.captionAt = prev.captionAt;
+          }
+        }
+      } catch {}
+
       const serialized = JSON.stringify(item);
       if (serialized.length > MAX_ITEM) {
         return res.status(413).json({ error: 'Слишком большой элемент' });

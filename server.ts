@@ -256,23 +256,70 @@ app.post('/api/schedule/:code', (req, res) => {
 });
 
 // Media List Sync Endpoints
+// «Надгробия» удалённых файлов лежат отдельно: { [code]: { [id]: время удаления } }
+const MEDIA_DELETED_FILE = path.join(DATA_DIR, 'media-deleted.json');
+
 app.get('/api/media-list/:code', (req, res) => {
   const code = req.params.code;
   const allMedia = loadJson<Record<string, any[]>>(MEDIA_FILE, {});
-  res.json({ code, items: allMedia[code] || [] });
+  const allDeleted = loadJson<Record<string, Record<string, number>>>(MEDIA_DELETED_FILE, {});
+  res.set('Cache-Control', 'no-store');
+  res.json({ code, items: allMedia[code] || [], deleted: Object.keys(allDeleted[code] || {}) });
 });
 
 app.post('/api/media-list/:code', (req, res) => {
   const code = req.params.code;
   const item = req.body;
+  if (!item || typeof item !== 'object' || !item.id) {
+    return res.status(400).json({ success: false, error: 'Неверный формат элемента' });
+  }
+  const allDeleted = loadJson<Record<string, Record<string, number>>>(MEDIA_DELETED_FILE, {});
+  if (allDeleted[code]?.[item.id]) {
+    return res.status(410).json({ success: false, error: 'Файл удалён' });
+  }
   const allMedia = loadJson<Record<string, any[]>>(MEDIA_FILE, {});
   if (!allMedia[code]) {
     allMedia[code] = [];
   }
-  // Add to top of list
-  allMedia[code].unshift(item);
+  // Обновляем запись с тем же id (без дублей), новые — в начало списка
+  const idx = allMedia[code].findIndex((m) => m.id === item.id);
+  if (idx >= 0) {
+    const prev = allMedia[code][idx];
+    // Не затираем более свежую подпись
+    if ((Number(prev.captionAt) || 0) > (Number(item.captionAt) || 0)) {
+      item.caption = prev.caption;
+      item.captionAt = prev.captionAt;
+    }
+    allMedia[code][idx] = item;
+  } else {
+    allMedia[code].unshift(item);
+  }
   saveJson(MEDIA_FILE, allMedia);
   res.json({ success: true, item });
+});
+
+app.patch('/api/media-list/:code/:id', (req, res) => {
+  const { code, id } = req.params;
+  const { caption, captionAt } = req.body || {};
+  if (typeof caption !== 'string') {
+    return res.status(400).json({ error: 'Неверный формат подписи' });
+  }
+  const allDeleted = loadJson<Record<string, Record<string, number>>>(MEDIA_DELETED_FILE, {});
+  if (allDeleted[code]?.[id]) {
+    return res.status(410).json({ error: 'Файл удалён' });
+  }
+  const allMedia = loadJson<Record<string, any[]>>(MEDIA_FILE, {});
+  const item = (allMedia[code] || []).find((m) => m.id === id);
+  if (!item) {
+    return res.status(404).json({ error: 'Файл не найден' });
+  }
+  const at = Number(captionAt) || Date.now();
+  if (at >= (Number(item.captionAt) || 0)) {
+    item.caption = caption.trim().slice(0, 300) || undefined;
+    item.captionAt = at;
+    saveJson(MEDIA_FILE, allMedia);
+  }
+  res.json({ success: true });
 });
 
 app.delete('/api/media-list/:code/:id', (req, res) => {
@@ -293,6 +340,11 @@ app.delete('/api/media-list/:code/:id', (req, res) => {
     allMedia[code] = allMedia[code].filter((m) => m.id !== id);
     saveJson(MEDIA_FILE, allMedia);
   }
+  // «Надгробие»: другие устройства увидят удаление
+  const allDeleted = loadJson<Record<string, Record<string, number>>>(MEDIA_DELETED_FILE, {});
+  if (!allDeleted[code]) allDeleted[code] = {};
+  allDeleted[code][id] = Date.now();
+  saveJson(MEDIA_DELETED_FILE, allDeleted);
   res.json({ success: true });
 });
 

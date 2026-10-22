@@ -58,7 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mb-1 flex items-center justify-center gap-2">
         <span>📅</span>
-        <span>Моё расписание на неделю</span>
+        <span>Запись на вызов Деда Мороза</span>
       </h1>
       <p className="text-sm text-slate-500 mb-6">
         Планируйте дела по часам и сохраняйте памятные фото и видео без ограничений

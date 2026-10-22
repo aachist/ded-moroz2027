@@ -20,6 +20,7 @@ interface MediaViewerProps {
   onClose: () => void;
   onNavigate: (newIndex: number) => void;
   onDelete: (item: MediaItem) => void;
+  onUpdateCaption: (item: MediaItem, caption: string) => void;
 }
 
 export const MediaViewer: React.FC<MediaViewerProps> = ({
@@ -28,6 +29,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
   onClose,
   onNavigate,
   onDelete,
+  onUpdateCaption,
 }) => {
   const currentItem = mediaList[currentIndex];
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -38,8 +40,27 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  // Подпись: правим черновик, сохраняем при выходе из поля (или Enter)
+  const [captionDraft, setCaptionDraft] = useState(currentItem?.caption || '');
+  useEffect(() => {
+    setCaptionDraft(currentItem?.caption || '');
+  }, [currentItem?.id]);
+
+  const saveCaption = () => {
+    if (!currentItem) return;
+    if ((currentItem.caption || '') !== captionDraft.trim()) {
+      onUpdateCaption(currentItem, captionDraft);
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Пока печатаем подпись, горячие клавиши (пробел, стрелки) не должны срабатывать
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && (t as HTMLInputElement).type === 'text'))) {
+        if (e.key === 'Escape') t.blur();
+        return;
+      }
       if (e.key === 'Escape') onClose();
       if (e.key === 'ArrowLeft') onNavigate((currentIndex - 1 + mediaList.length) % mediaList.length);
       if (e.key === 'ArrowRight') onNavigate((currentIndex + 1) % mediaList.length);
@@ -127,7 +148,6 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
           <span className="font-bold text-white">
             {currentIndex + 1} из {mediaList.length}
           </span>
-          {currentItem.name && <span className="opacity-80"> • {currentItem.name}</span>}
           {currentItem.size ? <span className="opacity-60"> ({formatFileSize(currentItem.size)})</span> : null}
         </div>
 
@@ -257,16 +277,31 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
         ) : (
           <img
             src={currentItem.url}
-            alt={currentItem.name}
+            alt={currentItem.caption || ''}
             className="max-w-[92vw] max-h-[82vh] object-contain rounded-xl shadow-2xl transition-all"
           />
         )}
       </div>
 
-      {/* Bottom Metadata Bar */}
-      <div className="text-center text-xs text-slate-400 pb-2">
+      {/* Подпись + дата */}
+      <div
+        className="w-full max-w-xl px-2 pb-2 flex flex-col items-center gap-2 text-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          type="text"
+          value={captionDraft}
+          maxLength={300}
+          onChange={(e) => setCaptionDraft(e.target.value)}
+          onBlur={saveCaption}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+          placeholder="Добавить подпись…"
+          className="w-full rounded-xl bg-white/10 hover:bg-white/15 focus:bg-white/20 border border-white/10 focus:border-white/40 text-white placeholder-slate-400 text-sm text-center px-4 py-2 outline-none transition-colors"
+        />
         {currentItem.created ? (
-          <span>
+          <span className="text-xs text-slate-400">
             Добавлено: {new Date(currentItem.created).toLocaleString('ru-RU')}
           </span>
         ) : null}

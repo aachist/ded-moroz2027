@@ -378,6 +378,96 @@ function photoSignature(m: MediaItem): string | null {
 // id показанного элемента -> его скрытые копии (чтобы удаление убирало и их тоже)
 const mediaAliases = new Map<string, MediaItem[]>();
 
+/* ---------- Удаления: очередь, пока сервер не подтвердит ---------- */
+const pendingDelKey = (code: string) => `mediaPendingDeletes:${code}`;
+
+function readPendingDeletes(code: string): string[] {
+  try {
+    const a = JSON.parse(localStorage.getItem(pendingDelKey(code)) || '[]');
+    return Array.isArray(a) ? a.map(String) : [];
+  } catch (e) {
+    return [];
+  }
+}
+function writePendingDeletes(code: string, ids: string[]): void {
+  try {
+    if (ids.length) localStorage.setItem(pendingDelKey(code), JSON.stringify(ids));
+    else localStorage.removeItem(pendingDelKey(code));
+  } catch (e) {}
+}
+
+let flushingDeletes = false;
+/** Отправляет на сервер удаления, которые ещё не подтверждены (нет сети, сервер недоступен и т.п.). */
+async function flushPendingDeletes(code: string): Promise<void> {
+  if (flushingDeletes) return;
+  flushingDeletes = true;
+  try {
+    for (const id of readPendingDeletes(code)) {
+      try {
+        const res = await fetch(`/api/media-list/${code}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (res.ok) writePendingDeletes(code, readPendingDeletes(code).filter((x) => x !== id));
+      } catch (e) {}
+    }
+  } finally {
+    flushingDeletes = false;
+  }
+}
+
+/* ---------- Подписи: очередь, пока сервер не подтвердит ---------- */
+type CaptionQueue = Record<string, { caption: string; at: number }>;
+const captionQueueKey = (code: string) => `mediaCaptionQueue:${code}`;
+
+function readCaptionQueue(code: string): CaptionQueue {
+  try {
+    const q = JSON.parse(localStorage.getItem(captionQueueKey(code)) || '{}');
+    return q && typeof q === 'object' ? q : {};
+  } catch (e) {
+    return {};
+  }
+}
+function writeCaptionQueue(code: string, q: CaptionQueue): void {
+  try {
+    if (Object.keys(q).length) localStorage.setItem(captionQueueKey(code), JSON.stringify(q));
+    else localStorage.removeItem(captionQueueKey(code));
+  } catch (e) {}
+}
+
+let flushingCaptions = false;
+async function flushCaptionQueue(code: string): Promise<void> {
+  if (flushingCaptions) return;
+  flushingCaptions = true;
+  try {
+    for (const [id, v] of Object.entries(readCaptionQueue(code))) {
+      try {
+        const res = await fetch(`/api/media-list/${code}/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ caption: v.caption, captionAt: v.at }),
+        });
+        // 404 — файл ещё не выгружен в облако: подпись уйдёт вместе с ним или со следующей попыткой
+        if (res.ok || res.status === 410) {
+          const cur = readCaptionQueue(code);
+          if (cur[id] && cur[id].at <= v.at) delete cur[id];
+          writeCaptionQueue(code, cur);
+        }
+      } catch (e) {}
+    }
+  } finally {
+    flushingCaptions = false;
+  }
+}
+
+/** Задаёт подпись к фото/видео: сохраняется сразу локально и синхронизируется на другие устройства. */
+export async function setMediaCaption(syncCode: string, item: MediaItem, caption: string): Promise<void> {
+  const text = caption.trim().slice(0, 300);
+  const at = Date.now();
+  await idbSaveMedia({ ...item, caption: text || undefined, captionAt: at });
+  const q = readCaptionQueue(syncCode);
+  q[item.id] = { caption: text, at };
+  writeCaptionQueue(syncCode, q);
+  flushCaptionQueue(syncCode).catch(() => {});
+}
+
 export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   // 1. Load immediately from IndexedDB
   const localItems = await idbGetMediaList(syncCode);
@@ -389,20 +479,24 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
 
   // 2–3. Firebase (работает с VPN) и свой сервер (Vercel API) опрашиваем параллельно
   const serverIds = new Set<string>();
-  const [fbItems, serverItems] = await Promise.all([
+  const [fbItems, serverData] = await Promise.all([
     fbFetchMedia(syncCode).catch(() => [] as MediaItem[]),
-    (async (): Promise<MediaItem[] | null> => {
+    (async (): Promise<{ items: MediaItem[]; deleted: string[] } | null> => {
       try {
         const res = await fetch(`/api/media-list/${syncCode}`, { cache: 'no-store' });
         if (!res.ok) return null;
         if (!(res.headers.get('content-type') || '').includes('application/json')) return null;
         const json = await res.json();
-        return Array.isArray(json.items) ? (json.items as MediaItem[]) : [];
+        return {
+          items: Array.isArray(json.items) ? (json.items as MediaItem[]) : [],
+          deleted: Array.isArray(json.deleted) ? json.deleted.map(String) : [],
+        };
       } catch (e) {
         return null;
       }
     })(),
   ]);
+  const serverItems = serverData ? serverData.items : null;
 
   const serverUrlById = new Map<string, string>();
   for (const item of serverItems || []) {
@@ -412,6 +506,26 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   }
   for (const item of fbItems) {
     if (!byId.has(item.id)) byId.set(item.id, item);
+  }
+
+  // Удаления: файлы, удалённые на других устройствах (и наши удаления, ещё не дошедшие до сервера)
+  const deletedIds = new Set<string>(serverData?.deleted || []);
+  for (const id of readPendingDeletes(syncCode)) deletedIds.add(id);
+  deletedIds.forEach((id) => {
+    byId.delete(id);
+    if (localIds.has(id)) idbDeleteMedia(id).catch(() => {});
+  });
+
+  // Подписи: берём более свежую версию (по captionAt) — локальную или с сервера
+  const captionSaves = new Set<string>();
+  for (const s of serverItems || []) {
+    const l = byId.get(s.id);
+    if (!l || l === s) continue;
+    if ((s.captionAt || 0) > (l.captionAt || 0)) {
+      l.caption = s.caption;
+      l.captionAt = s.captionAt;
+      if (localIds.has(l.id)) captionSaves.add(l.id);
+    }
   }
 
   // 4. Склеиваем копии одного и того же фото (одинаковое содержимое, загружены в одну минуту)
@@ -455,6 +569,7 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   });
   for (const m of result) {
     if (!localIds.has(m.id)) idbSaveMedia(m).catch(() => {});
+    else if (captionSaves.has(m.id)) idbSaveMedia(m).catch(() => {});
   }
 
   result.sort((a, b) => (b.created || 0) - (a.created || 0));
@@ -465,8 +580,11 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
     if (u) m.cloudUrl = u;
   }
 
-  // Если облачный сервер доступен — выгружаем в него файлы, которые есть только в этом браузере
+  // Если облачный сервер доступен: досылаем отложенные удаления и подписи,
+  // и выгружаем файлы, которые есть только в этом браузере
   if (serverItems !== null) {
+    flushPendingDeletes(syncCode).catch(() => {});
+    flushCaptionQueue(syncCode).catch(() => {});
     syncLocalMediaToCloud(syncCode, result, serverIds).catch(() => {});
   }
   return result;
@@ -632,6 +750,8 @@ function toServerItem(item: MediaItem, cloudUrl: string) {
     duration: item.duration,
     url: cloudUrl,
     thumb,
+    caption: item.caption,
+    captionAt: item.captionAt,
   };
 }
 
@@ -667,6 +787,11 @@ async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toServerItem(item, blob.url)),
     });
+    if (res.status === 410) {
+      // Файл удалили на другом устройстве, пока он выгружался: сервер уже убрал его из облака
+      setCloudStatus({ uploading: null });
+      return false;
+    }
     if (!res.ok) throw new Error(`media-list HTTP ${res.status}`);
 
     item.cloudUrl = blob.url;
@@ -759,6 +884,15 @@ export async function deleteMediaItem(syncCode: string, item: MediaItem): Promis
   // Вместе с фото удаляем его скрытые копии (дубли от старых загрузок)
   const copies = mediaAliases.get(item.id) || [];
   mediaAliases.delete(item.id);
+
+  // Запоминаем удаление до подтверждения сервера: так оно дойдёт до других устройств,
+  // даже если сейчас нет связи, и удалённое не «воскреснет» при синхронизации
+  const idsToDelete = [item, ...copies].map((t) => t.id);
+  writePendingDeletes(syncCode, Array.from(new Set([...readPendingDeletes(syncCode), ...idsToDelete])));
+  const cq = readCaptionQueue(syncCode);
+  idsToDelete.forEach((id) => delete cq[id]);
+  writeCaptionQueue(syncCode, cq);
+
   for (const target of [item, ...copies]) {
     // 1. Delete from IndexedDB immediately
     await idbDeleteMedia(target.id);
@@ -766,12 +900,14 @@ export async function deleteMediaItem(syncCode: string, item: MediaItem): Promis
     // 2. Delete from Firebase
     fbDeleteMedia(target.id).catch(() => {});
 
-    // 3. Delete from server
-    fetch(`/api/media-list/${syncCode}/${target.id}`, { method: 'DELETE' }).catch(() => {});
+    // 3. Файл на старом локальном сервере (если был)
     if (target.filename) {
       fetch(`/api/media/${target.filename}`, { method: 'DELETE' }).catch(() => {});
     }
   }
+
+  // 4. Сообщаем серверу (он убирает запись и файл из облака и помечает файл удалённым для других устройств)
+  flushPendingDeletes(syncCode).catch(() => {});
 
   return true;
 }
