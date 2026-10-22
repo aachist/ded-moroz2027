@@ -115,11 +115,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     setNote('');
 
     if (hasOverlap) {
-      showMsg('Занятие добавлено, но время пересекается с другим планом', 'warn');
+      showMsg('Мероприятие добавлено, но время пересекается с другой записью', 'warn');
     } else {
-      showMsg('Занятие успешно добавлено в расписание ✔', 'ok');
+      showMsg('Мероприятие добавлено ✔', 'ok');
     }
   };
+
+  // Удаление только из списка мероприятий и только после подтверждения
+  const [confirmDelete, setConfirmDelete] = useState<ScheduleEvent | null>(null);
 
   const handleDeleteEvent = (id: string) => {
     const remaining = currentEvents.filter((e) => e.id !== id);
@@ -130,19 +133,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       updated[selectedKey] = remaining;
     }
     onUpdateSchedule(updated);
-    showMsg('Занятие удалено', 'ok');
+    showMsg('Мероприятие удалено', 'ok');
   };
 
   const handleClearDay = () => {
     if (!currentEvents.length) {
-      showMsg('Этот день и так свободен', 'warn');
+      showMsg('На этот день мероприятий нет', 'warn');
       return;
     }
-    if (window.confirm('Очистить все занятия на этот выбранный день?')) {
+    if (window.confirm('Удалить все мероприятия на выбранный день? Это действие нельзя отменить.')) {
       const updated = { ...schedule };
       delete updated[selectedKey];
       onUpdateSchedule(updated);
-      showMsg('Все занятия на этот день удалены', 'ok');
+      showMsg('Все мероприятия на этот день удалены', 'ok');
     }
   };
 
@@ -377,22 +380,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         ))}
       </div>
 
-      {/* Interactive Visual Timeline */}
-      <Timeline
-        events={currentEvents}
-        selectedDate={selectedDate}
-        onDeleteEvent={handleDeleteEvent}
-      />
+      {/* Шкала дня (только просмотр: удаление — в списке мероприятий ниже) */}
+      <Timeline events={currentEvents} selectedDate={selectedDate} />
 
-      {/* List of Events */}
+      {/* Список мероприятий */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
         <h3 className="font-bold text-slate-900 text-sm sm:text-base mb-3">
-          Список занятий на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+          Список мероприятий на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
         </h3>
 
         {currentEvents.length === 0 ? (
           <div className="text-center py-8 text-slate-400 text-sm">
-            На этот день пока нет занятий — добавьте первое через форму выше 🙂
+            На этот день пока нет мероприятий — добавьте первое через форму выше 🙂
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
@@ -425,9 +424,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleDeleteEvent(evt.id)}
+                      onClick={() => setConfirmDelete(evt)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
-                      title="Удалить занятие"
+                      title="Удалить мероприятие"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -437,6 +436,54 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Подтверждение удаления */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="text-base font-bold text-slate-900 mb-1">Удалить мероприятие?</h4>
+            <p className="text-sm text-slate-600 mb-1">
+              {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })},{' '}
+              <span className="font-mono font-semibold">
+                {confirmDelete.start} – {confirmDelete.end}
+              </span>
+              , {(ACTIVITY_TYPES[confirmDelete.type] || ACTIVITY_TYPES.other).name}
+            </p>
+            {confirmDelete.note && (
+              <p className="text-sm text-slate-500 mb-1 break-words">«{confirmDelete.note}»</p>
+            )}
+            <p className="text-xs text-slate-400 mb-4">Это действие нельзя отменить.</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setConfirmDelete(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleDeleteEvent(confirmDelete.id);
+                  setConfirmDelete(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-sm font-semibold text-white cursor-pointer"
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

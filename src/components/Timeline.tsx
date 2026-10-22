@@ -1,12 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import { ScheduleEvent } from '../types';
 import { ACTIVITY_TYPES } from '../constants/types';
-import { Clock, Trash2 } from 'lucide-react';
+import { Clock } from 'lucide-react';
 
 interface TimelineProps {
   events: ScheduleEvent[];
   selectedDate: Date;
-  onDeleteEvent: (id: string) => void;
 }
 
 function timeToMinutes(t: string): number {
@@ -23,7 +22,7 @@ function isSameDay(d1: Date, d2: Date): boolean {
   );
 }
 
-export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, onDeleteEvent }) => {
+export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const now = new Date();
   const isToday = isSameDay(selectedDate, now);
@@ -131,11 +130,8 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, onDele
               return (
                 <div
                   key={evt.id}
-                  onClick={() => onDeleteEvent(evt.id)}
-                  title={`${evt.start} – ${evt.end} • ${typeCfg.name}${
-                    evt.note ? ` • ${evt.note}` : ''
-                  }\n(Нажмите для удаления)`}
-                  className="group absolute rounded-lg p-2 text-white shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden border-l-4 border-black/20"
+                  title={`${evt.start} – ${evt.end} • ${typeCfg.name}${evt.note ? ` • ${evt.note}` : ''}`}
+                  className="group absolute rounded-lg p-2 text-white shadow-sm transition-all overflow-hidden border-l-4 border-black/20"
                   style={{
                     backgroundColor: typeCfg.color,
                     top: `${topPercent}%`,
@@ -148,16 +144,6 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, onDele
                     <div className="font-bold text-[11px] sm:text-xs truncate">
                       {evt.start} – {evt.end}
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteEvent(evt.id);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 bg-black/20 hover:bg-black/40 rounded transition-opacity"
-                      title="Удалить"
-                    >
-                      <Trash2 className="w-3 h-3 text-white" />
-                    </button>
                   </div>
 
                   {!isShort && (

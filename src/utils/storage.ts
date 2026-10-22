@@ -9,31 +9,15 @@ import {
   RemoteSchedule,
 } from './firebaseSync';
 
-const SYNC_CODE_KEY = 'syncCode';
 const SCHEDULE_KEY = 'weekSchedule';
 const STORAGE_CONFIG_KEY = 'storage_config_settings';
 
-// Generate safe 8-character sync code: 4 chars - 4 chars
-const CODE_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
-export function generateSyncCode(): string {
-  let s = '';
-  for (let i = 0; i < 8; i++) {
-    s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
-  }
-  return s.slice(0, 4) + '-' + s.slice(4);
-}
+// Единое рабочее пространство для всех устройств: вводить код синхронизации не нужно.
+// Значение совпадает с кодом, под которым уже лежат существующие мероприятия и медиа.
+export const WORKSPACE_CODE = '9yhr-su6d';
 
 export function getStoredSyncCode(): string {
-  let code = localStorage.getItem(SYNC_CODE_KEY);
-  if (!code || !/^[a-z0-9-]{6,12}$/i.test(code)) {
-    code = generateSyncCode();
-    localStorage.setItem(SYNC_CODE_KEY, code);
-  }
-  return code;
-}
-
-export function setStoredSyncCode(code: string): void {
-  localStorage.setItem(SYNC_CODE_KEY, code.trim().toLowerCase());
+  return WORKSPACE_CODE;
 }
 
 export function getStorageConfig(): StorageConfig {
@@ -468,6 +452,10 @@ export async function setMediaCaption(syncCode: string, item: MediaItem, caption
   flushCaptionQueue(syncCode).catch(() => {});
 }
 
+// id файлов, удалённых на любом устройстве (последний известный список)
+let knownDeletedIds = new Set<string>();
+export const getKnownDeletedIds = (): Set<string> => knownDeletedIds;
+
 export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   // 1. Load immediately from IndexedDB
   const localItems = await idbGetMediaList(syncCode);
@@ -511,6 +499,7 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   // Удаления: файлы, удалённые на других устройствах (и наши удаления, ещё не дошедшие до сервера)
   const deletedIds = new Set<string>(serverData?.deleted || []);
   for (const id of readPendingDeletes(syncCode)) deletedIds.add(id);
+  knownDeletedIds = deletedIds;
   deletedIds.forEach((id) => {
     byId.delete(id);
     if (localIds.has(id)) idbDeleteMedia(id).catch(() => {});
@@ -691,6 +680,61 @@ export async function uploadMediaFile(
 
   onProgress?.(100);
   return mediaItem;
+}
+
+/**
+ * Добавляет файл из резервной копии с прежними id, датой и подписью.
+ * В облако он уйдёт обычной фоновой выгрузкой при ближайшей синхронизации.
+ */
+export interface ImportMediaMeta {
+  id: string;
+  type: 'photo' | 'video';
+  mime?: string;
+  name?: string;
+  created?: number;
+  caption?: string;
+  captionAt?: number;
+  thumb?: string;
+  duration?: number;
+}
+
+export async function importMediaItem(
+  syncCode: string,
+  meta: ImportMediaMeta,
+  blob: Blob
+): Promise<MediaItem> {
+  const base = {
+    id: meta.id,
+    code: syncCode,
+    type: meta.type,
+    mime: meta.mime || blob.type,
+    name: meta.name || '',
+    created: meta.created || Date.now(),
+    size: blob.size,
+    caption: meta.caption,
+    captionAt: meta.captionAt,
+    storageSource: 'local' as const,
+  };
+  let item: MediaItem;
+  if (meta.type === 'photo') {
+    const dataUrl = await new Promise<string>((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result as string);
+      reader.onerror = rej;
+      reader.readAsDataURL(blob);
+    });
+    item = { ...base, url: dataUrl, thumb: dataUrl, data: dataUrl };
+  } else {
+    item = {
+      ...base,
+      url: URL.createObjectURL(blob),
+      thumb: meta.thumb || '',
+      blob,
+      duration: meta.duration || 0,
+    };
+  }
+  await idbSaveMedia(item);
+  return item;
 }
 
 /* ---------- Облачная выгрузка (Vercel Blob + список в Redis) ---------- */

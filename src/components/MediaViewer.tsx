@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MediaItem } from '../types';
-import { formatFileSize } from '../utils/storage';
 import {
   X,
   Trash2,
@@ -148,7 +147,6 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
           <span className="font-bold text-white">
             {currentIndex + 1} из {mediaList.length}
           </span>
-          {currentItem.size ? <span className="opacity-60"> ({formatFileSize(currentItem.size)})</span> : null}
         </div>
 
         <button

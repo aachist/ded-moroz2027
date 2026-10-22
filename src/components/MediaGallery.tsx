@@ -1,9 +1,8 @@
-import React, { useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { MediaItem } from '../types';
 import {
   uploadMediaFile,
   deleteMediaItem,
-  formatFileSize,
   plural,
   getCloudStatus,
   subscribeCloudStatus,
@@ -23,6 +22,52 @@ import {
   Loader2,
   ShieldCheck,
 } from 'lucide-react';
+
+/** Поле подписи под снимком: сохраняется при выходе из поля или по Enter. */
+const CaptionField: React.FC<{ item: MediaItem; onSave: (item: MediaItem, caption: string) => void }> = ({
+  item,
+  onSave,
+}) => {
+  const [value, setValue] = useState(item.caption || '');
+  const [focused, setFocused] = useState(false);
+  // Только что сохранённая подпись: показываем её, пока список не обновится (иначе мелькает старая)
+  const [pending, setPending] = useState<string | null>(null);
+
+  // Подпись, пришедшую с другого устройства, подтягиваем, пока поле не редактируется
+  useEffect(() => {
+    if (pending !== null) {
+      if ((item.caption || '') === pending) setPending(null);
+      return;
+    }
+    if (!focused) setValue(item.caption || '');
+  }, [item.caption, focused, pending]);
+
+  const commit = () => {
+    setFocused(false);
+    const text = value.trim();
+    if (text !== (item.caption || '')) {
+      setPending(text);
+      setValue(text);
+      onSave(item, text);
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      value={value}
+      maxLength={300}
+      placeholder="Добавить подпись…"
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+      }}
+      className="w-full rounded-lg border border-transparent hover:border-slate-200 focus:border-blue-400 bg-transparent focus:bg-white px-2 py-1 text-xs text-slate-700 placeholder-slate-400 outline-none transition-colors"
+    />
+  );
+};
 
 interface MediaGalleryProps {
   mediaList: MediaItem[];
@@ -387,8 +432,8 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
               const globalIdx = mediaList.findIndex((item) => item.id === m.id);
 
               return (
+                <div key={m.id} className="flex flex-col gap-1.5">
                 <div
-                  key={m.id}
                   onClick={() => setActiveViewerIndex(globalIdx)}
                   className="group relative aspect-square rounded-xl overflow-hidden bg-slate-100 border border-slate-200/80 shadow-2xs hover:shadow-md transition-all cursor-pointer"
                 >
@@ -443,25 +488,15 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                         handleDelete(m);
                       }
                     }}
-                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 hover:bg-rose-600 text-white backdrop-blur-xs opacity-0 group-hover:opacity-100 transition-all cursor-pointer shadow-xs"
+                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 hover:bg-rose-600 text-white backdrop-blur-xs opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-all cursor-pointer shadow-xs"
                     title="Удалить"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                </div>
 
-                  {/* Bottom: подпись и размер (имя файла не показываем) */}
-                  {(m.caption || m.size) && (
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-2 text-white flex items-end justify-between gap-2 leading-tight opacity-90">
-                      <span className="text-[11px] font-medium line-clamp-2 break-words">
-                        {m.caption || ''}
-                      </span>
-                      {m.size ? (
-                        <span className="text-[9px] font-mono opacity-80 shrink-0">
-                          {formatFileSize(m.size)}
-                        </span>
-                      ) : null}
-                    </div>
-                  )}
+                {/* Подпись под снимком */}
+                <CaptionField item={m} onSave={handleCaption} />
                 </div>
               );
             })}
