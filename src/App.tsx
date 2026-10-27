@@ -8,15 +8,23 @@ import {
   requestPersistentStorage,
   fetchMediaList,
 } from './utils/storage';
+import { getSession, logout, Session } from './utils/auth';
 import { Header, TabKey } from './components/Header';
 import { ScheduleView } from './components/ScheduleView';
 import { MediaGallery } from './components/MediaGallery';
 import { HelpView } from './components/HelpView';
+import { LoginForm } from './components/LoginForm';
 
 // Все устройства работают в одном общем пространстве: коды синхронизации не нужны
 const syncCode = WORKSPACE_CODE;
 
+// admin — полный доступ (после входа по паролю); client — только просмотр фото и видео
+type Role = 'loading' | 'admin' | 'client';
+
 export default function App() {
+  const [role, setRole] = useState<Role>('loading');
+  const [authConfigured, setAuthConfigured] = useState(true);
+
   const [activeTab, setActiveTab] = useState<TabKey>('schedule');
   const [schedule, setSchedule] = useState<DaySchedule>({});
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
@@ -33,9 +41,33 @@ export default function App() {
   const editVersionRef = useRef(0);
   const pendingPushesRef = useRef(0);
 
+  const applySession = useCallback((s: Session | null) => {
+    if (!s) return; // нет связи — оставляем текущий режим
+    setRole(s.admin ? 'admin' : 'client');
+    setAuthConfigured(s.configured);
+  }, []);
+
+  // Первая проверка: кто пришёл — администратор или клиент
+  useEffect(() => {
+    getSession().then((s) => {
+      if (s) applySession(s);
+      else setRole('client'); // сервер не ответил: безопасный режим — только просмотр
+    });
+  }, [applySession]);
+
+  // ---- Режим администратора ----
   const loadData = useCallback(async () => {
     const editsAtStart = editVersionRef.current;
     try {
+      // Если сессия закончилась — возвращаемся в режим клиента
+      const s = await getSession();
+      if (s && !s.admin) {
+        setSchedule({});
+        setMediaList([]);
+        setRole('client');
+        return;
+      }
+
       setSyncStatus('Синхронизация…');
       const [schedData, mediaData] = await Promise.all([
         fetchSchedule(syncCode),
@@ -62,21 +94,28 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    requestPersistentStorage();
+  // ---- Режим клиента: только чтение списка фото и видео ----
+  const loadClientData = useCallback(async () => {
+    try {
+      const list = await fetchMediaList(syncCode, { readOnly: true });
+      setMediaList(list);
+    } catch (err) {
+      console.error(err);
+    }
   }, []);
 
+  // Загрузка и периодический опрос: изменения с других устройств подтягиваются раз в 20 секунд
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Периодический опрос: изменения с других устройств подтягиваются раз в 20 секунд
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadData();
-    }, 20000);
+    if (role === 'loading') return;
+    const run = role === 'admin' ? loadData : loadClientData;
+    run();
+    const interval = setInterval(run, 20000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, [role, loadData, loadClientData]);
+
+  useEffect(() => {
+    if (role === 'admin') requestPersistentStorage();
+  }, [role]);
 
   // Сохранение мероприятий: в браузере сразу, на сервер — с небольшой задержкой
   const handleUpdateSchedule = (newSchedule: DaySchedule) => {
@@ -99,7 +138,7 @@ export default function App() {
         setSyncStatus(
           ok
             ? `✅ Сохранено в ${time}`
-            : `⚠️ Сохранено только на этом устройстве (${time}): нет связи с сервером`
+            : `⚠️ Сохранено только на этом устройстве (${time}): нет связи с сервером или нужно войти заново`
         );
       } finally {
         pendingPushesRef.current -= 1;
@@ -107,16 +146,68 @@ export default function App() {
     }, 400);
   };
 
-  const refreshMedia = () => fetchMediaList(syncCode).then(setMediaList);
+  const refreshMedia = () =>
+    fetchMediaList(syncCode, { readOnly: role !== 'admin' }).then(setMediaList);
 
+  const handleLogout = async () => {
+    await logout();
+    setSchedule({});
+    setMediaList([]);
+    setActiveTab('schedule');
+    setRole('client');
+  };
+
+  const handleLoginSuccess = async () => {
+    setSchedule({});
+    setMediaList([]);
+    applySession(await getSession());
+  };
+
+  if (role === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">Загрузка…</div>
+    );
+  }
+
+  // ---- Клиент: только «Фото и видео», только просмотр ----
+  if (role === 'client') {
+    return (
+      <div className="min-h-screen pb-16">
+        <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-6 sm:pt-8">
+          <Header
+            activeTab="media"
+            setActiveTab={() => {}}
+            mediaCount={mediaList.length}
+            syncStatus=""
+            clientMode
+          />
+          <main>
+            <MediaGallery mediaList={mediaList} syncCode={syncCode} onRefreshMedia={refreshMedia} readOnly />
+          </main>
+          <LoginForm onSuccess={handleLoginSuccess} />
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Администратор: весь сайт ----
   return (
     <div className="min-h-screen pb-16">
       <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-6 sm:pt-8">
+        {!authConfigured && (
+          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-sm px-4 py-3">
+            ⚠️ <b>Пароль администратора не задан: сейчас сайт открыт всем, у кого есть ссылка.</b> Добавьте переменную{' '}
+            <code className="font-mono">ADMIN_PASSWORD</code> в Vercel (Settings → Environment Variables) и нажмите
+            Redeploy.
+          </div>
+        )}
+
         <Header
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           mediaCount={mediaList.length}
           syncStatus={syncStatus}
+          onLogout={authConfigured ? handleLogout : undefined}
         />
 
         <main className="transition-all duration-200">

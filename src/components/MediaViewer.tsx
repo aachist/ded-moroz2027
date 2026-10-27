@@ -20,6 +20,7 @@ interface MediaViewerProps {
   onNavigate: (newIndex: number) => void;
   onDelete: (item: MediaItem) => void;
   onUpdateCaption: (item: MediaItem, caption: string) => void;
+  readOnly?: boolean; // режим клиента: нельзя удалять и менять подписи
 }
 
 export const MediaViewer: React.FC<MediaViewerProps> = ({
@@ -29,6 +30,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
   onNavigate,
   onDelete,
   onUpdateCaption,
+  readOnly = false,
 }) => {
   const currentItem = mediaList[currentIndex];
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -119,6 +121,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2">
+          {!readOnly && (
           <button
             onClick={() => {
               if (window.confirm('Удалить этот файл из галереи?')) {
@@ -131,6 +134,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
             <Trash2 className="w-4 h-4" />
             <span>Удалить</span>
           </button>
+          )}
 
           <a
             href={currentItem.url}
@@ -286,6 +290,11 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
         className="w-full max-w-xl px-2 pb-2 flex flex-col items-center gap-2 text-center"
         onClick={(e) => e.stopPropagation()}
       >
+        {readOnly ? (
+          currentItem.caption ? (
+            <p className="text-white text-sm text-center break-words">{currentItem.caption}</p>
+          ) : null
+        ) : (
         <input
           type="text"
           value={captionDraft}
@@ -298,6 +307,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
           placeholder="Добавить подпись…"
           className="w-full rounded-xl bg-white/10 hover:bg-white/15 focus:bg-white/20 border border-white/10 focus:border-white/40 text-white placeholder-slate-400 text-sm text-center px-4 py-2 outline-none transition-colors"
         />
+        )}
         {currentItem.created ? (
           <span className="text-xs text-slate-400">
             Добавлено: {new Date(currentItem.created).toLocaleString('ru-RU')}

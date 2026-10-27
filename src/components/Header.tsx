@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Image as ImageIcon, BookOpen } from 'lucide-react';
+import { Calendar, Image as ImageIcon, BookOpen, LogOut } from 'lucide-react';
 
 export type TabKey = 'schedule' | 'media' | 'help';
 
@@ -8,9 +8,18 @@ interface HeaderProps {
   setActiveTab: (tab: TabKey) => void;
   mediaCount: number;
   syncStatus: string;
+  clientMode?: boolean; // клиент: только заголовок, без вкладок
+  onLogout?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, mediaCount, syncStatus }) => {
+export const Header: React.FC<HeaderProps> = ({
+  activeTab,
+  setActiveTab,
+  mediaCount,
+  syncStatus,
+  clientMode = false,
+  onLogout,
+}) => {
   const tabClass = (active: boolean) =>
     `flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
       active
@@ -18,9 +27,33 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, mediaCo
         : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 hover:border-slate-300'
     }`;
 
+  if (clientMode) {
+    return (
+      <header className="mb-6 text-center">
+        <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mb-1 flex items-center justify-center gap-2">
+          <span>🎅</span>
+          <span>Дед Мороз</span>
+        </h1>
+        <p className="text-sm text-slate-500">Фото и видео с вашего праздника</p>
+      </header>
+    );
+  }
+
   return (
-    <header className="mb-6 text-center">
-      <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mb-1 flex items-center justify-center gap-2">
+    <header className="mb-6 text-center relative">
+      {onLogout && (
+        <button
+          type="button"
+          onClick={onLogout}
+          className="absolute right-0 top-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-white border border-transparent hover:border-slate-200 cursor-pointer transition-all"
+          title="Выйти из режима администратора"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Выйти</span>
+        </button>
+      )}
+
+      <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mb-1 flex items-center justify-center gap-2 px-16">
         <span>📅</span>
         <span>Запись на вызов Деда Мороза</span>
       </h1>

@@ -5,7 +5,21 @@
  *   PATCH  /api/media-list/:code/:id  — задаёт подпись { caption, captionAt }
  */
 import process from 'node:process';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { del } from '@vercel/blob';
+
+/** Администратор = подписанная cookie dm_session. Пока ADMIN_PASSWORD не задан, доступ открыт (прежнее поведение). */
+function isAdmin(req: any): boolean {
+  if (!process.env.ADMIN_PASSWORD) return true;
+  const key = process.env.AUTH_SECRET || process.env.ADMIN_PASSWORD;
+  const m = /(?:^|;\s*)dm_session=([^;]+)/.exec(String(req.headers?.cookie || ''));
+  if (!m) return false;
+  const [exp, sig] = decodeURIComponent(m[1]).split('.');
+  if (!Number(exp) || Number(exp) < Date.now() || !sig) return false;
+  const a = Buffer.from(sig);
+  const b = Buffer.from(createHmac('sha256', key).update(exp).digest('hex'));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 const CODE_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const ID_RE = /^[A-Za-z0-9_.-]{1,80}$/;
@@ -32,6 +46,11 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'DELETE' && req.method !== 'PATCH') {
     res.setHeader('Allow', 'DELETE, PATCH');
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Менять подписи и удалять файлы может только администратор
+  if (!isAdmin(req)) {
+    return res.status(401).json({ error: 'Требуется вход' });
   }
 
   const code = String(req.query?.code ?? '');

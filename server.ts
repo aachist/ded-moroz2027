@@ -85,6 +85,12 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Health check endpoint
+// Локальный запуск (npm run dev): вы работаете один, защиты паролем нет — всегда «администратор».
+// На Vercel вход обрабатывает api/auth/[action].ts.
+app.get('/api/auth/session', (_req, res) => res.json({ admin: true, configured: true }));
+app.post('/api/auth/login', (_req, res) => res.json({ success: true }));
+app.post('/api/auth/logout', (_req, res) => res.json({ success: true }));
+
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',

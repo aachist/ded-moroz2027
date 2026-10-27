@@ -456,9 +456,14 @@ export async function setMediaCaption(syncCode: string, item: MediaItem, caption
 let knownDeletedIds = new Set<string>();
 export const getKnownDeletedIds = (): Set<string> => knownDeletedIds;
 
-export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
+export async function fetchMediaList(
+  syncCode: string,
+  opts: { readOnly?: boolean } = {}
+): Promise<MediaItem[]> {
+  const readOnly = !!opts.readOnly; // режим клиента: только чтение, ничего не пишем и не выгружаем
+
   // 1. Load immediately from IndexedDB
-  const localItems = await idbGetMediaList(syncCode);
+  const localItems = readOnly ? [] : await idbGetMediaList(syncCode);
   const localIds = new Set(localItems.map((m) => m.id));
   const byId = new Map<string, MediaItem>();
   for (const m of localItems) {
@@ -468,7 +473,7 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
   // 2–3. Firebase (работает с VPN) и свой сервер (Vercel API) опрашиваем параллельно
   const serverIds = new Set<string>();
   const [fbItems, serverData] = await Promise.all([
-    fbFetchMedia(syncCode).catch(() => [] as MediaItem[]),
+    readOnly ? Promise.resolve([] as MediaItem[]) : fbFetchMedia(syncCode).catch(() => [] as MediaItem[]),
     (async (): Promise<{ items: MediaItem[]; deleted: string[] } | null> => {
       try {
         const res = await fetch(`/api/media-list/${syncCode}`, { cache: 'no-store' });
@@ -556,9 +561,11 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
       if (localIds.has(d.id)) idbDeleteMedia(d.id).catch(() => {});
     }
   });
-  for (const m of result) {
-    if (!localIds.has(m.id)) idbSaveMedia(m).catch(() => {});
-    else if (captionSaves.has(m.id)) idbSaveMedia(m).catch(() => {});
+  if (!readOnly) {
+    for (const m of result) {
+      if (!localIds.has(m.id)) idbSaveMedia(m).catch(() => {});
+      else if (captionSaves.has(m.id)) idbSaveMedia(m).catch(() => {});
+    }
   }
 
   result.sort((a, b) => (b.created || 0) - (a.created || 0));
@@ -571,7 +578,7 @@ export async function fetchMediaList(syncCode: string): Promise<MediaItem[]> {
 
   // Если облачный сервер доступен: досылаем отложенные удаления и подписи,
   // и выгружаем файлы, которые есть только в этом браузере
-  if (serverItems !== null) {
+  if (!readOnly && serverItems !== null) {
     flushPendingDeletes(syncCode).catch(() => {});
     flushCaptionQueue(syncCode).catch(() => {});
     syncLocalMediaToCloud(syncCode, result, serverIds).catch(() => {});

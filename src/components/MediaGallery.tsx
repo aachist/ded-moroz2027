@@ -73,12 +73,14 @@ interface MediaGalleryProps {
   mediaList: MediaItem[];
   syncCode: string;
   onRefreshMedia: () => void;
+  readOnly?: boolean; // режим клиента: только просмотр
 }
 
 export const MediaGallery: React.FC<MediaGalleryProps> = ({
   mediaList,
   syncCode,
   onRefreshMedia,
+  readOnly = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -209,7 +211,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
   return (
     <div className="space-y-6">
       {/* Cloud status */}
-      {mediaList.length > 0 && (
+      {!readOnly && mediaList.length > 0 && (
         <div
           className={`rounded-xl border px-4 py-3 text-sm flex items-center justify-between gap-3 flex-wrap ${
             cloud.uploading
@@ -252,7 +254,8 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
         </div>
       )}
 
-      {/* Upload Dropzone */}
+      {/* Upload Dropzone (только для администратора) */}
+      {!readOnly && (
       <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -354,6 +357,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
           </div>
         )}
       </div>
+      )}
 
       {/* Gallery Section */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
@@ -413,18 +417,22 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
               <Film className="w-7 h-7" />
             </div>
             <p className="text-slate-700 font-medium text-sm">
-              Пока ничего нет — добавьте первое фото или видео 🙂
+              {readOnly ? 'Пока здесь нет фото и видео 🙂' : 'Пока ничего нет — добавьте первое фото или видео 🙂'}
             </p>
-            <p className="text-slate-400 text-xs mt-1">
-              Файлы сохраняются безопасно без сторонних ключей
-            </p>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
-            >
-              Выбрать файлы
-            </button>
+            {!readOnly && (
+              <>
+                <p className="text-slate-400 text-xs mt-1">
+                  Файлы сохраняются безопасно без сторонних ключей
+                </p>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
+                >
+                  Выбрать файлы
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
@@ -480,7 +488,8 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                     </span>
                   )}
 
-                  {/* Delete Button */}
+                  {/* Delete Button (только для администратора) */}
+                  {!readOnly && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -493,10 +502,17 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                  )}
                 </div>
 
-                {/* Подпись под снимком */}
-                <CaptionField item={m} onSave={handleCaption} />
+                {/* Подпись под снимком (клиент её только читает) */}
+                {readOnly ? (
+                  m.caption ? (
+                    <p className="px-2 text-xs text-slate-700 break-words">{m.caption}</p>
+                  ) : null
+                ) : (
+                  <CaptionField item={m} onSave={handleCaption} />
+                )}
                 </div>
               );
             })}
@@ -513,6 +529,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
           onNavigate={(newIdx) => setActiveViewerIndex(newIdx)}
           onDelete={handleDelete}
           onUpdateCaption={handleCaption}
+          readOnly={readOnly}
         />
       )}
     </div>

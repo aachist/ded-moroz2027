@@ -3,7 +3,22 @@
  * Файл летит с устройства напрямую в Blob, минуя функцию (у функций лимит ~4.5 МБ на запрос).
  * Нужна переменная окружения BLOB_READ_WRITE_TOKEN (добавляется при подключении Blob к проекту).
  */
+import process from 'node:process';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
+
+/** Администратор = подписанная cookie dm_session. Пока ADMIN_PASSWORD не задан, доступ открыт (прежнее поведение). */
+function isAdmin(req: any): boolean {
+  if (!process.env.ADMIN_PASSWORD) return true;
+  const key = process.env.AUTH_SECRET || process.env.ADMIN_PASSWORD;
+  const m = /(?:^|;\s*)dm_session=([^;]+)/.exec(String(req.headers?.cookie || ''));
+  if (!m) return false;
+  const [exp, sig] = decodeURIComponent(m[1]).split('.');
+  if (!Number(exp) || Number(exp) < Date.now() || !sig) return false;
+  const a = Buffer.from(sig);
+  const b = Buffer.from(createHmac('sha256', key).update(exp).digest('hex'));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 const CODE_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const MAX_SIZE = 200 * 1024 * 1024; // 200 МБ, как указано в интерфейсе
@@ -13,6 +28,11 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Загружать файлы может только администратор
+  if (!isAdmin(req)) {
+    return res.status(401).json({ error: 'Требуется вход' });
   }
 
   try {

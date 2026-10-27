@@ -6,7 +6,21 @@
  * Сами файлы лежат в Vercel Blob, здесь только ссылки и подписи.
  */
 import process from 'node:process';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { del } from '@vercel/blob';
+
+/** Администратор = подписанная cookie dm_session. Пока ADMIN_PASSWORD не задан, доступ открыт (прежнее поведение). */
+function isAdmin(req: any): boolean {
+  if (!process.env.ADMIN_PASSWORD) return true;
+  const key = process.env.AUTH_SECRET || process.env.ADMIN_PASSWORD;
+  const m = /(?:^|;\s*)dm_session=([^;]+)/.exec(String(req.headers?.cookie || ''));
+  if (!m) return false;
+  const [exp, sig] = decodeURIComponent(m[1]).split('.');
+  if (!Number(exp) || Number(exp) < Date.now() || !sig) return false;
+  const a = Buffer.from(sig);
+  const b = Buffer.from(createHmac('sha256', key).update(exp).digest('hex'));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 const CODE_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const ID_RE = /^[A-Za-z0-9_.-]{1,80}$/;
@@ -52,6 +66,10 @@ export default async function handler(req: any, res: any) {
     }
 
     if (req.method === 'POST') {
+      // Добавлять и менять файлы может только администратор (читать список может любой — это галерея клиентов)
+      if (!isAdmin(req)) {
+        return res.status(401).json({ error: 'Требуется вход' });
+      }
       const b = req.body;
       if (!b || typeof b !== 'object' || !ID_RE.test(String(b.id ?? ''))) {
         return res.status(400).json({ error: 'Неверный формат элемента' });
