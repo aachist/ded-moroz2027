@@ -6,6 +6,7 @@ import { Clock } from 'lucide-react';
 interface TimelineProps {
   events: ScheduleEvent[];
   selectedDate: Date;
+  hint?: string; // подпись справа в заголовке шкалы
 }
 
 function timeToMinutes(t: string): number {
@@ -22,7 +23,7 @@ function isSameDay(d1: Date, d2: Date): boolean {
   );
 }
 
-export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate }) => {
+export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, hint }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const now = new Date();
   const isToday = isSameDay(selectedDate, now);
@@ -72,9 +73,7 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate }) => {
           <Clock className="w-4 h-4 text-blue-500" />
           <span>Временная шкала дня (24 часа)</span>
         </h3>
-        <span className="text-xs text-slate-400">
-          Нажмите на занятие на шкале, чтобы удалить
-        </span>
+        {hint ? <span className="text-xs text-slate-400">{hint}</span> : null}
       </div>
 
       <div

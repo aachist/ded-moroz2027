@@ -6,15 +6,17 @@ import {
   backupFileName,
   readBackup,
   restoreBackup,
-  countEvents,
+  manifestEventCount,
   LoadedBackup,
 } from '../utils/backup';
+import type { Booking } from '../utils/bookings';
 import { Download, Upload, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface HelpViewProps {
   schedule: DaySchedule;
   onUpdateSchedule: (s: DaySchedule) => void;
   mediaList: MediaItem[];
+  bookings: Booking[];
   syncCode: string;
   onRefreshMedia: () => void;
 }
@@ -41,6 +43,7 @@ export const HelpView: React.FC<HelpViewProps> = ({
   schedule,
   onUpdateSchedule,
   mediaList,
+  bookings,
   syncCode,
   onRefreshMedia,
 }) => {
@@ -57,11 +60,13 @@ export const HelpView: React.FC<HelpViewProps> = ({
     setMsg(null);
     setProgress('');
     try {
-      const { blob, stats } = await createBackup(schedule, mediaList, { includeVideos }, (d, t) =>
+      const { blob, stats } = await createBackup(schedule, mediaList, { includeVideos, bookings }, (d, t) =>
         setProgress(t ? `Подготовка файлов: ${d} из ${t}` : '')
       );
       downloadBlob(blob, backupFileName());
-      let text = `Копия сохранена: мероприятий ${stats.events}, фото ${stats.photos}, видео ${stats.videos}.`;
+      let text = `Копия сохранена: мероприятий ${stats.events + stats.bookings}${
+        stats.bookings ? ` (из них заявок с сайта: ${stats.bookings})` : ''
+      }, фото ${stats.photos}, видео ${stats.videos}.`;
       if (stats.skippedVideos) text += ` Видео не включены: ${stats.skippedVideos}.`;
       if (stats.missing) text += ` Не удалось получить файлов: ${stats.missing} (проверьте связь и повторите).`;
       setMsg({ type: stats.missing ? 'warn' : 'ok', text });
@@ -104,7 +109,7 @@ export const HelpView: React.FC<HelpViewProps> = ({
     setBusy('restore');
     setMsg(null);
     try {
-      const res = await restoreBackup(pending.loaded, mode, { syncCode, schedule, media: mediaList });
+      const res = await restoreBackup(pending.loaded, mode, { syncCode, schedule, media: mediaList, bookings });
       if (mode === 'replace' || res.addedEvents > 0) onUpdateSchedule(res.schedule);
       if (res.addedMedia > 0) onRefreshMedia();
 
@@ -121,7 +126,7 @@ export const HelpView: React.FC<HelpViewProps> = ({
     }
   };
 
-  const pendingEvents = pending ? countEvents(pending.loaded.manifest.schedule) : 0;
+  const pendingEvents = pending ? manifestEventCount(pending.loaded.manifest) : 0;
   const pendingFiles = pending ? pending.loaded.manifest.media.filter((m) => m.file).length : 0;
   const pendingNoFile = pending ? pending.loaded.manifest.media.length - pendingFiles : 0;
 
@@ -156,8 +161,21 @@ export const HelpView: React.FC<HelpViewProps> = ({
       <Card title="Доступ клиентов и вход администратора">
         <ul className="space-y-2 text-sm text-slate-700 leading-relaxed list-disc pl-5">
           <li>
-            Клиентам достаточно отправить ссылку на сайт. Без пароля они видят <b>только «Фото и видео»</b>: могут
-            смотреть и скачивать, но не могут ничего добавлять, менять и удалять. Мероприятия клиентам не показываются.
+            Клиентам достаточно отправить ссылку на сайт. Без пароля они видят <b>две страницы</b>: «Запись на вызов» и
+            «Фото и видео».
+          </li>
+          <li>
+            На странице записи клиент видит ваши и чужие заказы только как серое «Занято» (без вида праздника, имён и
+            комментариев) и может занять лишь <b>свободное время</b>: указать время, имя, телефон и адрес. Пересечение с
+            любой записью сервер не пропустит.
+          </li>
+          <li>
+            Заявки клиентов появляются у вас в расписании с пометкой «Заявка с сайта» и контактами, а над списком есть
+            блок «Заявки с сайта» для быстрого перехода к дате. Удалить заявку можно корзиной (с подтверждением): время
+            освободится. Клиент сам заявку изменить или отменить не может.
+          </li>
+          <li>
+            Фото и видео клиенты только смотрят и скачивают: добавлять, менять подписи и удалять нельзя.
           </li>
           <li>
             Чтобы работать со всем сайтом, нажмите внизу страницы «Вход для администратора» и введите пароль. Выйти

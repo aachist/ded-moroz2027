@@ -9,8 +9,10 @@ import {
   fetchMediaList,
 } from './utils/storage';
 import { getSession, logout, Session } from './utils/auth';
+import { fetchBookings, deleteBooking, Booking } from './utils/bookings';
 import { Header, TabKey } from './components/Header';
 import { ScheduleView } from './components/ScheduleView';
+import { ClientScheduleView } from './components/ClientScheduleView';
 import { MediaGallery } from './components/MediaGallery';
 import { HelpView } from './components/HelpView';
 import { LoginForm } from './components/LoginForm';
@@ -18,7 +20,8 @@ import { LoginForm } from './components/LoginForm';
 // Все устройства работают в одном общем пространстве: коды синхронизации не нужны
 const syncCode = WORKSPACE_CODE;
 
-// admin — полный доступ (после входа по паролю); client — только просмотр фото и видео
+// admin — полный доступ (после входа по паролю);
+// client — две страницы: запись на свободное время (чужие заказы видны только как «Занято») и просмотр фото/видео
 type Role = 'loading' | 'admin' | 'client';
 
 export default function App() {
@@ -33,6 +36,7 @@ export default function App() {
     return d;
   });
   const [mediaList, setMediaList] = useState<MediaItem[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]); // заявки клиентов (видит только администратор)
   const [syncStatus, setSyncStatus] = useState<string>('Проверка связи…');
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,17 +68,22 @@ export default function App() {
       if (s && !s.admin) {
         setSchedule({});
         setMediaList([]);
+        setBookings([]);
         setRole('client');
         return;
       }
 
       setSyncStatus('Синхронизация…');
-      const [schedData, mediaData] = await Promise.all([
+      const [schedData, mediaData, bookingsData] = await Promise.all([
         fetchSchedule(syncCode),
         fetchMediaList(syncCode),
+        fetchBookings(syncCode),
       ]);
 
       setMediaList(mediaData);
+      if (bookingsData) {
+        setBookings((prev) => (JSON.stringify(prev) === JSON.stringify(bookingsData) ? prev : bookingsData));
+      }
 
       const userEditedMeanwhile =
         editVersionRef.current !== editsAtStart ||
@@ -149,10 +158,17 @@ export default function App() {
   const refreshMedia = () =>
     fetchMediaList(syncCode, { readOnly: role !== 'admin' }).then(setMediaList);
 
+  const handleDeleteBooking = async (id: string): Promise<boolean> => {
+    const ok = await deleteBooking(syncCode, id);
+    if (ok) setBookings((prev) => prev.filter((b) => b.id !== id));
+    return ok;
+  };
+
   const handleLogout = async () => {
     await logout();
     setSchedule({});
     setMediaList([]);
+    setBookings([]);
     setActiveTab('schedule');
     setRole('client');
   };
@@ -169,20 +185,25 @@ export default function App() {
     );
   }
 
-  // ---- Клиент: только «Фото и видео», только просмотр ----
+  // ---- Клиент: запись на свободное время + просмотр фото и видео ----
   if (role === 'client') {
+    const clientTab: TabKey = activeTab === 'media' ? 'media' : 'schedule';
     return (
       <div className="min-h-screen pb-16">
         <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-6 sm:pt-8">
           <Header
-            activeTab="media"
-            setActiveTab={() => {}}
+            activeTab={clientTab}
+            setActiveTab={setActiveTab}
             mediaCount={mediaList.length}
             syncStatus=""
             clientMode
           />
           <main>
-            <MediaGallery mediaList={mediaList} syncCode={syncCode} onRefreshMedia={refreshMedia} readOnly />
+            {clientTab === 'schedule' ? (
+              <ClientScheduleView syncCode={syncCode} />
+            ) : (
+              <MediaGallery mediaList={mediaList} syncCode={syncCode} onRefreshMedia={refreshMedia} readOnly />
+            )}
           </main>
           <LoginForm onSuccess={handleLoginSuccess} />
         </div>
@@ -217,6 +238,8 @@ export default function App() {
               onUpdateSchedule={handleUpdateSchedule}
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
+              bookings={bookings}
+              onDeleteBooking={handleDeleteBooking}
             />
           )}
 
@@ -229,6 +252,7 @@ export default function App() {
               schedule={schedule}
               onUpdateSchedule={handleUpdateSchedule}
               mediaList={mediaList}
+              bookings={bookings}
               syncCode={syncCode}
               onRefreshMedia={refreshMedia}
             />

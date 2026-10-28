@@ -7,6 +7,7 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import type { Zippable } from 'fflate';
 import { DaySchedule, MediaItem, ScheduleEvent } from '../types';
 import { importMediaItem, ImportMediaMeta, getKnownDeletedIds } from './storage';
+import type { Booking } from './bookings';
 
 export interface BackupMediaMeta extends ImportMediaMeta {
   file?: string; // путь внутри архива; нет — файл не удалось включить в копию
@@ -18,10 +19,12 @@ export interface BackupManifest {
   createdAt: number;
   schedule: DaySchedule;
   media: BackupMediaMeta[];
+  bookings?: Booking[]; // заявки клиентов с сайта (при восстановлении становятся обычными мероприятиями)
 }
 
 export interface BackupStats {
   events: number;
+  bookings: number; // заявки клиентов, вошедшие в копию
   photos: number;
   videos: number;
   missing: number; // файлы, которые не удалось получить
@@ -33,6 +36,44 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function countEvents(schedule: DaySchedule): number {
   return Object.values(schedule).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
+}
+
+/** Сколько мероприятий в копии: расписание + заявки клиентов. */
+export function manifestEventCount(m: BackupManifest): number {
+  return countEvents(m.schedule) + (m.bookings?.length || 0);
+}
+
+/** Оставляет только корректные заявки (защита от повреждённого файла). */
+function sanitizeBookings(raw: any): Booking[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Booking[] = [];
+  for (const b of raw) {
+    if (!b || typeof b !== 'object') continue;
+    if (!DATE_RE.test(String(b.date)) || !TIME_RE.test(String(b.start)) || !TIME_RE.test(String(b.end))) continue;
+    out.push({
+      id: String(b.id || `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`),
+      date: String(b.date),
+      start: String(b.start),
+      end: String(b.end),
+      type: b.type === 'adults' ? 'adults' : 'kids',
+      name: String(b.name || '').slice(0, 80),
+      phone: String(b.phone || '').slice(0, 30),
+      note: typeof b.note === 'string' && b.note ? b.note.slice(0, 500) : undefined,
+      createdAt: Number(b.createdAt) || 0,
+    });
+  }
+  return out;
+}
+
+/** Заявка клиента -> обычное мероприятие (контакты уходят в комментарий). */
+function bookingToEvent(b: Booking): ScheduleEvent {
+  return {
+    id: `bk-${b.id}`,
+    start: b.start,
+    end: b.end,
+    type: b.type,
+    note: ['Заявка с сайта', b.name, b.phone, b.note].filter(Boolean).join(' · '),
+  };
 }
 
 /** Оставляет только корректные мероприятия (защита от повреждённого файла). */
@@ -82,13 +123,15 @@ function extFor(item: MediaItem): string {
 export async function createBackup(
   schedule: DaySchedule,
   media: MediaItem[],
-  opts: { includeVideos: boolean },
+  opts: { includeVideos: boolean; bookings?: Booking[] },
   onProgress?: (done: number, total: number) => void
 ): Promise<{ blob: Blob; stats: BackupStats }> {
   const files: Zippable = {};
   const metas: BackupMediaMeta[] = [];
+  const bookings = opts.bookings || [];
   const stats: BackupStats = {
     events: countEvents(schedule),
+    bookings: bookings.length,
     photos: 0,
     videos: 0,
     missing: 0,
@@ -140,6 +183,7 @@ export async function createBackup(
     createdAt: Date.now(),
     schedule,
     media: metas,
+    bookings,
   };
   files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
 
@@ -177,9 +221,16 @@ export async function readBackup(file: File): Promise<LoadedBackup> {
     const parsed = JSON.parse(await file.text());
     // Полная копия в виде JSON, либо просто расписание { "2026-10-21": [...] }
     const manifest: BackupManifest = parsed && parsed.schedule
-      ? { app: 'ded-moroz', version: 1, createdAt: Number(parsed.createdAt) || 0, schedule: sanitizeSchedule(parsed.schedule), media: [] }
-      : { app: 'ded-moroz', version: 1, createdAt: 0, schedule: sanitizeSchedule(parsed), media: [] };
-    if (countEvents(manifest.schedule) === 0) {
+      ? {
+          app: 'ded-moroz',
+          version: 1,
+          createdAt: Number(parsed.createdAt) || 0,
+          schedule: sanitizeSchedule(parsed.schedule),
+          media: [],
+          bookings: sanitizeBookings(parsed.bookings),
+        }
+      : { app: 'ded-moroz', version: 1, createdAt: 0, schedule: sanitizeSchedule(parsed), media: [], bookings: [] };
+    if (manifestEventCount(manifest) === 0) {
       throw new Error('В файле не найдено ни одного мероприятия');
     }
     return { manifest, getFile: () => null };
@@ -201,6 +252,7 @@ export async function readBackup(file: File): Promise<LoadedBackup> {
     version: 1,
     createdAt: Number(parsed.createdAt) || 0,
     schedule: sanitizeSchedule(parsed.schedule),
+    bookings: sanitizeBookings(parsed.bookings),
     media: Array.isArray(parsed.media)
       ? parsed.media.filter(
           (m: any) => m && typeof m.id === 'string' && (m.type === 'photo' || m.type === 'video')
@@ -255,17 +307,26 @@ function mergeSchedules(current: DaySchedule, incoming: DaySchedule): { result: 
 export async function restoreBackup(
   loaded: LoadedBackup,
   mode: 'merge' | 'replace',
-  ctx: { syncCode: string; schedule: DaySchedule; media: MediaItem[] }
+  ctx: { syncCode: string; schedule: DaySchedule; media: MediaItem[]; bookings?: Booking[] }
 ): Promise<RestoreResult> {
   const { manifest, getFile } = loaded;
+
+  // Заявки клиентов из копии становятся обычными мероприятиями (с контактами в комментарии).
+  // Пропускаем те, что и сейчас ещё лежат на сайте как заявки: иначе время задвоится.
+  const currentBookingIds = new Set((ctx.bookings || []).map((b) => b.id));
+  const incoming: DaySchedule = JSON.parse(JSON.stringify(manifest.schedule));
+  for (const b of manifest.bookings || []) {
+    if (currentBookingIds.has(b.id)) continue;
+    (incoming[b.date] ||= []).push(bookingToEvent(b));
+  }
 
   let schedule: DaySchedule;
   let addedEvents: number;
   if (mode === 'replace') {
-    schedule = manifest.schedule;
+    schedule = incoming;
     addedEvents = countEvents(schedule);
   } else {
-    const merged = mergeSchedules(ctx.schedule, manifest.schedule);
+    const merged = mergeSchedules(ctx.schedule, incoming);
     schedule = merged.result;
     addedEvents = merged.added;
   }

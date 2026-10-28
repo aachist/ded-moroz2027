@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { DaySchedule, ScheduleEvent } from '../types';
 import { ACTIVITY_TYPES, SELECTABLE_TYPES } from '../constants/types';
+import { Booking } from '../utils/bookings';
 import { Timeline } from './Timeline';
-import { Plus, Trash2, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, PieChart } from 'lucide-react';
+import { Plus, Trash2, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, PieChart, Inbox } from 'lucide-react';
 
 interface ScheduleViewProps {
   schedule: DaySchedule;
   onUpdateSchedule: (newSchedule: DaySchedule) => void;
   selectedDate: Date;
   setSelectedDate: (date: Date) => void;
+  bookings?: Booking[]; // заявки клиентов с сайта
+  onDeleteBooking?: (id: string) => Promise<boolean>;
 }
 
 function formatDateKey(d: Date): string {
@@ -29,6 +32,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   onUpdateSchedule,
   selectedDate,
   setSelectedDate,
+  bookings = [],
+  onDeleteBooking,
 }) => {
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
@@ -71,6 +76,26 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const selectedKey = formatDateKey(selectedDate);
   const currentEvents: ScheduleEvent[] = schedule[selectedKey] || [];
 
+  // Заявки клиентов на этот день: показываем рядом с записями, но храним отдельно от расписания
+  const bookingEvents: ScheduleEvent[] = bookings
+    .filter((b) => b.date === selectedKey)
+    .map((b) => ({
+      id: `booking:${b.id}`,
+      start: b.start,
+      end: b.end,
+      type: b.type,
+      note: [b.name, b.phone, b.note].filter(Boolean).join(' · '),
+      fromClient: true,
+      bookingId: b.id,
+    }));
+  const displayEvents: ScheduleEvent[] = [...currentEvents, ...bookingEvents];
+
+  // Ближайшие заявки с сайта (для быстрого перехода)
+  const todayKey = formatDateKey(new Date());
+  const upcomingBookings = bookings
+    .filter((b) => b.date >= todayKey)
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+
   const showMsg = (text: string, type: 'ok' | 'warn' | 'err') => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 4000);
@@ -91,7 +116,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     }
 
     // Check overlaps
-    const hasOverlap = currentEvents.some((evt) => {
+    const hasOverlap = displayEvents.some((evt) => {
       let eEnd = toMinutes(evt.end);
       if (evt.end === '24:00') eEnd = 1440;
       const eStart = toMinutes(evt.start);
@@ -150,7 +175,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   };
 
   // Calculate day stats
-  const totalMinutes = currentEvents.reduce((acc, evt) => {
+  const totalMinutes = displayEvents.reduce((acc, evt) => {
     let eEnd = toMinutes(evt.end);
     if (evt.end === '24:00') eEnd = 1440;
     const eStart = toMinutes(evt.start);
@@ -381,7 +406,36 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       </div>
 
       {/* Шкала дня (только просмотр: удаление — в списке мероприятий ниже) */}
-      <Timeline events={currentEvents} selectedDate={selectedDate} />
+      <Timeline events={displayEvents} selectedDate={selectedDate} hint="Заявки с сайта отмечены в списке ниже" />
+
+      {/* Новые заявки с сайта: быстрый переход к дате */}
+      {upcomingBookings.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+          <div className="flex items-center gap-2 text-sm font-bold text-amber-900 mb-2">
+            <Inbox className="w-4 h-4" />
+            Заявки с сайта: {upcomingBookings.length}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {upcomingBookings.slice(0, 8).map((b) => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => setSelectedDate(new Date(b.date + 'T00:00:00'))}
+                className="text-left text-sm text-amber-900 hover:bg-amber-100 rounded-lg px-2 py-1 cursor-pointer"
+              >
+                <span className="font-mono font-semibold">
+                  {new Date(b.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}{' '}
+                  {b.start}–{b.end}
+                </span>
+                <span className="text-amber-800"> · {b.name}, {b.phone}</span>
+              </button>
+            ))}
+            {upcomingBookings.length > 8 && (
+              <div className="text-xs text-amber-700 px-2">и ещё {upcomingBookings.length - 8}…</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Список мероприятий */}
       <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
@@ -389,22 +443,24 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           Список мероприятий на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
         </h3>
 
-        {currentEvents.length === 0 ? (
+        {displayEvents.length === 0 ? (
           <div className="text-center py-8 text-slate-400 text-sm">
             На этот день пока нет мероприятий — добавьте первое через форму выше 🙂
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {[...currentEvents]
+            {[...displayEvents]
               .sort((a, b) => toMinutes(a.start) - toMinutes(b.start))
               .map((evt) => {
                 const cfg = ACTIVITY_TYPES[evt.type] || ACTIVITY_TYPES.other;
                 return (
                   <div
                     key={evt.id}
-                    className="py-3 flex items-center justify-between gap-3 hover:bg-slate-50/80 px-2 rounded-xl transition-colors"
+                    className={`py-3 flex items-center justify-between gap-3 px-2 rounded-xl transition-colors ${
+                      evt.fromClient ? 'bg-amber-50/60 hover:bg-amber-50' : 'hover:bg-slate-50/80'
+                    }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0 flex-wrap">
                       <span
                         className="w-3.5 h-3.5 rounded-md shrink-0 shadow-2xs"
                         style={{ backgroundColor: cfg.color }}
@@ -415,9 +471,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       <span className="font-semibold text-slate-700 text-sm truncate">
                         {cfg.name}
                       </span>
+                      {evt.fromClient && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide bg-amber-200 text-amber-900 rounded-md px-1.5 py-0.5">
+                          Заявка с сайта
+                        </span>
+                      )}
                       {evt.note && (
-                        <span className="text-xs text-slate-400 truncate hidden sm:inline">
-                          — {evt.note}
+                        <span
+                          className={`text-xs text-slate-500 ${
+                            evt.fromClient ? 'basis-full break-words' : 'truncate hidden sm:inline text-slate-400'
+                          }`}
+                        >
+                          {evt.fromClient ? evt.note : `— ${evt.note}`}
                         </span>
                       )}
                     </div>
@@ -426,7 +491,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       type="button"
                       onClick={() => setConfirmDelete(evt)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
-                      title="Удалить мероприятие"
+                      title={evt.fromClient ? 'Удалить заявку' : 'Удалить мероприятие'}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -449,7 +514,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5"
             onClick={(e) => e.stopPropagation()}
           >
-            <h4 className="text-base font-bold text-slate-900 mb-1">Удалить мероприятие?</h4>
+            <h4 className="text-base font-bold text-slate-900 mb-1">
+              {confirmDelete.fromClient ? 'Удалить заявку клиента?' : 'Удалить мероприятие?'}
+            </h4>
             <p className="text-sm text-slate-600 mb-1">
               {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })},{' '}
               <span className="font-mono font-semibold">
@@ -472,9 +539,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  handleDeleteEvent(confirmDelete.id);
+                onClick={async () => {
+                  const target = confirmDelete;
                   setConfirmDelete(null);
+                  if (target.fromClient && target.bookingId) {
+                    const ok = onDeleteBooking ? await onDeleteBooking(target.bookingId) : false;
+                    showMsg(ok ? 'Заявка удалена, время освободилось' : 'Не удалось удалить заявку. Проверьте связь.', ok ? 'ok' : 'err');
+                  } else {
+                    handleDeleteEvent(target.id);
+                  }
                 }}
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-sm font-semibold text-white cursor-pointer"
               >

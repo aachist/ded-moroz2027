@@ -5,6 +5,8 @@ export interface ScheduleEvent {
   type: string;  // activity type key
   note?: string;
   _col?: number;
+  fromClient?: boolean; // заявка, оставленная клиентом на сайте (не часть расписания администратора)
+  bookingId?: string;   // id заявки, если fromClient
 }
 
 export interface ActivityTypeConfig {

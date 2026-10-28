@@ -32,9 +32,29 @@ export const Header: React.FC<HeaderProps> = ({
       <header className="mb-6 text-center">
         <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight mb-1 flex items-center justify-center gap-2">
           <span>🎅</span>
-          <span>Дед Мороз</span>
+          <span>Вызов Деда Мороза</span>
         </h1>
-        <p className="text-sm text-slate-500">Фото и видео с вашего праздника</p>
+        <p className="text-sm text-slate-500 mb-5">Выберите свободное время и оставьте заявку</p>
+
+        <div className="flex gap-2 justify-center flex-wrap">
+          <button type="button" onClick={() => setActiveTab('schedule')} className={tabClass(activeTab === 'schedule')}>
+            <Calendar className="w-4 h-4" />
+            <span>Запись на вызов</span>
+          </button>
+          <button type="button" onClick={() => setActiveTab('media')} className={tabClass(activeTab === 'media')}>
+            <ImageIcon className="w-4 h-4" />
+            <span>Фото и видео</span>
+            {mediaCount > 0 && (
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                  activeTab === 'media' ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'
+                }`}
+              >
+                {mediaCount}
+              </span>
+            )}
+          </button>
+        </div>
       </header>
     );
   }
