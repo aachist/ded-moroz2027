@@ -259,7 +259,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                   <span className="block text-[10px] opacity-70">
                     {d.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')}
                   </span>
-                  <span className={`block text-[9px] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
+                  <span className={`hidden sm:block text-[9px] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
                     {busy ? (count ? `занято: ${count}` : 'свободно') : ' '}
                   </span>
                 </button>

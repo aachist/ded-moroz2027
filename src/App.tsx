@@ -10,7 +10,14 @@ import {
 } from './utils/storage';
 import { getSession, logout, Session } from './utils/auth';
 import { fetchBookings, deleteBooking, Booking } from './utils/bookings';
-import { Header, TabKey } from './components/Header';
+import { fetchContent, saveContent, telHref, SiteContent, EMPTY_CONTENT, Contacts } from './utils/content';
+import { PageKey, PAGE_LABELS, CLIENT_PAGES, ADMIN_PAGES, useHashPage } from './nav';
+import { SiteHeader } from './components/SiteHeader';
+import { HomePage } from './components/HomePage';
+import { PageShell, SiteFooter } from './components/PageParts';
+import { ContentPage } from './components/ContentPage';
+import { ContactsPage } from './components/ContactsPage';
+import { ReviewsPage } from './components/ReviewsPage';
 import { ScheduleView } from './components/ScheduleView';
 import { ClientScheduleView } from './components/ClientScheduleView';
 import { MediaGallery } from './components/MediaGallery';
@@ -21,14 +28,15 @@ import { LoginForm } from './components/LoginForm';
 const syncCode = WORKSPACE_CODE;
 
 // admin — полный доступ (после входа по паролю);
-// client — две страницы: запись на свободное время (чужие заказы видны только как «Занято») и просмотр фото/видео
+// client — клиентская часть сайта: запись на свободное время, примеры встреч, варианты, правила, отзывы, контакты
 type Role = 'loading' | 'admin' | 'client';
 
 export default function App() {
   const [role, setRole] = useState<Role>('loading');
   const [authConfigured, setAuthConfigured] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<TabKey>('schedule');
+  const [page, setPage] = useHashPage(role === 'admin' ? ADMIN_PAGES : CLIENT_PAGES);
+
   const [schedule, setSchedule] = useState<DaySchedule>({});
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const d = new Date();
@@ -37,6 +45,7 @@ export default function App() {
   });
   const [mediaList, setMediaList] = useState<MediaItem[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]); // заявки клиентов (видит только администратор)
+  const [content, setContent] = useState<SiteContent>(EMPTY_CONTENT); // контакты и тексты страниц
   const [syncStatus, setSyncStatus] = useState<string>('Проверка связи…');
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -55,9 +64,15 @@ export default function App() {
   useEffect(() => {
     getSession().then((s) => {
       if (s) applySession(s);
-      else setRole('client'); // сервер не ответил: безопасный режим — только просмотр
+      else setRole('client'); // сервер не ответил: безопасный режим
     });
   }, [applySession]);
+
+  // Контакты и тексты страниц (публичные): подгружаем для всех
+  const loadContent = useCallback(async () => {
+    const c = await fetchContent(syncCode);
+    if (c) setContent((prev) => (JSON.stringify(prev) === JSON.stringify(c) ? prev : c));
+  }, []);
 
   // ---- Режим администратора ----
   const loadData = useCallback(async () => {
@@ -78,6 +93,7 @@ export default function App() {
         fetchSchedule(syncCode),
         fetchMediaList(syncCode),
         fetchBookings(syncCode),
+        loadContent(),
       ]);
 
       setMediaList(mediaData);
@@ -101,17 +117,17 @@ export default function App() {
       console.error(err);
       setSyncStatus('Данные сохранены на этом устройстве');
     }
-  }, []);
+  }, [loadContent]);
 
-  // ---- Режим клиента: только чтение списка фото и видео ----
+  // ---- Режим клиента: только чтение ----
   const loadClientData = useCallback(async () => {
     try {
-      const list = await fetchMediaList(syncCode, { readOnly: true });
+      const [list] = await Promise.all([fetchMediaList(syncCode, { readOnly: true }), loadContent()]);
       setMediaList(list);
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [loadContent]);
 
   // Загрузка и периодический опрос: изменения с других устройств подтягиваются раз в 20 секунд
   useEffect(() => {
@@ -164,12 +180,26 @@ export default function App() {
     return ok;
   };
 
+  // Сохранение текстов и контактов (администратор). Возвращает текст ошибки или null.
+  const saveText = (field: 'variants' | 'rules') => async (text: string): Promise<string | null> => {
+    const res = await saveContent(syncCode, { [field]: text });
+    if (!res.ok) return res.message;
+    setContent(res.content);
+    return null;
+  };
+  const saveContacts = async (contacts: Contacts): Promise<string | null> => {
+    const res = await saveContent(syncCode, { contacts });
+    if (!res.ok) return res.message;
+    setContent(res.content);
+    return null;
+  };
+
   const handleLogout = async () => {
     await logout();
     setSchedule({});
     setMediaList([]);
     setBookings([]);
-    setActiveTab('schedule');
+    setPage('home');
     setRole('client');
   };
 
@@ -185,69 +215,85 @@ export default function App() {
     );
   }
 
-  // ---- Клиент: запись на свободное время + просмотр фото и видео ----
-  if (role === 'client') {
-    const clientTab: TabKey = activeTab === 'media' ? 'media' : 'schedule';
-    return (
-      <div className="min-h-screen pb-16">
-        <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-6 sm:pt-8">
-          <Header
-            activeTab={clientTab}
-            setActiveTab={setActiveTab}
-            mediaCount={mediaList.length}
-            syncStatus=""
-            clientMode
-          />
-          <main>
-            {clientTab === 'schedule' ? (
-              <ClientScheduleView syncCode={syncCode} />
+  const isAdmin = role === 'admin';
+  const phoneHref = telHref(content.contacts.phone);
+
+  const renderPage = (p: PageKey): React.ReactNode => {
+    switch (p) {
+      case 'home':
+        return <HomePage setPage={setPage} phoneHref={phoneHref} isAdmin={isAdmin} />;
+
+      case 'schedule':
+        return (
+          <PageShell title={PAGE_LABELS.schedule} onBack={() => setPage('home')}>
+            {isAdmin ? (
+              <ScheduleView
+                schedule={schedule}
+                onUpdateSchedule={handleUpdateSchedule}
+                selectedDate={selectedDate}
+                setSelectedDate={setSelectedDate}
+                bookings={bookings}
+                onDeleteBooking={handleDeleteBooking}
+              />
             ) : (
-              <MediaGallery mediaList={mediaList} syncCode={syncCode} onRefreshMedia={refreshMedia} readOnly />
+              <ClientScheduleView syncCode={syncCode} />
             )}
-          </main>
-          <LoginForm onSuccess={handleLoginSuccess} />
-        </div>
-      </div>
-    );
-  }
+          </PageShell>
+        );
 
-  // ---- Администратор: весь сайт ----
-  return (
-    <div className="min-h-screen pb-16">
-      <div className="max-w-4xl mx-auto px-3 sm:px-6 pt-6 sm:pt-8">
-        {!authConfigured && (
-          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-sm px-4 py-3">
-            ⚠️ <b>Пароль администратора не задан: сейчас сайт открыт всем, у кого есть ссылка.</b> Добавьте переменную{' '}
-            <code className="font-mono">ADMIN_PASSWORD</code> в Vercel (Settings → Environment Variables) и нажмите
-            Redeploy.
-          </div>
-        )}
-
-        <Header
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          mediaCount={mediaList.length}
-          syncStatus={syncStatus}
-          onLogout={authConfigured ? handleLogout : undefined}
-        />
-
-        <main className="transition-all duration-200">
-          {activeTab === 'schedule' && (
-            <ScheduleView
-              schedule={schedule}
-              onUpdateSchedule={handleUpdateSchedule}
-              selectedDate={selectedDate}
-              setSelectedDate={setSelectedDate}
-              bookings={bookings}
-              onDeleteBooking={handleDeleteBooking}
+      case 'media':
+        return (
+          <PageShell title={PAGE_LABELS.media} onBack={() => setPage('home')}>
+            <MediaGallery
+              mediaList={mediaList}
+              syncCode={syncCode}
+              onRefreshMedia={refreshMedia}
+              readOnly={!isAdmin}
             />
-          )}
+          </PageShell>
+        );
 
-          {activeTab === 'media' && (
-            <MediaGallery mediaList={mediaList} syncCode={syncCode} onRefreshMedia={refreshMedia} />
-          )}
+      case 'variants':
+        return (
+          <PageShell title={PAGE_LABELS.variants} onBack={() => setPage('home')}>
+            <ContentPage
+              text={content.variants}
+              isAdmin={isAdmin}
+              onSave={saveText('variants')}
+              emptyHint="Описание вариантов встреч появится совсем скоро. А пока позвоните нам, и мы всё расскажем!"
+            />
+          </PageShell>
+        );
 
-          {activeTab === 'help' && (
+      case 'rules':
+        return (
+          <PageShell title={PAGE_LABELS.rules} onBack={() => setPage('home')}>
+            <ContentPage
+              text={content.rules}
+              isAdmin={isAdmin}
+              onSave={saveText('rules')}
+              emptyHint="Правила встреч появятся совсем скоро."
+            />
+          </PageShell>
+        );
+
+      case 'reviews':
+        return (
+          <PageShell title={PAGE_LABELS.reviews} onBack={() => setPage('home')}>
+            <ReviewsPage syncCode={syncCode} isAdmin={isAdmin} />
+          </PageShell>
+        );
+
+      case 'contacts':
+        return (
+          <PageShell title={PAGE_LABELS.contacts} onBack={() => setPage('home')}>
+            <ContactsPage contacts={content.contacts} isAdmin={isAdmin} onSave={saveContacts} />
+          </PageShell>
+        );
+
+      case 'help':
+        return (
+          <PageShell title={PAGE_LABELS.help} onBack={() => setPage('home')}>
             <HelpView
               schedule={schedule}
               onUpdateSchedule={handleUpdateSchedule}
@@ -256,9 +302,38 @@ export default function App() {
               syncCode={syncCode}
               onRefreshMedia={refreshMedia}
             />
-          )}
-        </main>
-      </div>
+          </PageShell>
+        );
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <SiteHeader
+        page={page}
+        setPage={setPage}
+        pages={isAdmin ? ADMIN_PAGES : CLIENT_PAGES}
+        phoneHref={phoneHref}
+        isAdmin={isAdmin}
+        syncStatus={syncStatus}
+        mediaCount={mediaList.length}
+        onLogout={authConfigured ? handleLogout : undefined}
+      />
+
+      <main className="flex-1 w-full max-w-5xl mx-auto px-3 sm:px-6 py-6 sm:py-8">
+        {isAdmin && !authConfigured && (
+          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-sm px-4 py-3">
+            ⚠️ <b>Пароль администратора не задан: сейчас сайт открыт всем, у кого есть ссылка.</b> Добавьте переменную{' '}
+            <code className="font-mono">ADMIN_PASSWORD</code> в Vercel (Settings → Environment Variables) и нажмите
+            Redeploy.
+          </div>
+        )}
+        {renderPage(page)}
+      </main>
+
+      <SiteFooter contacts={content.contacts}>
+        {!isAdmin && <LoginForm onSuccess={handleLoginSuccess} onDark />}
+      </SiteFooter>
     </div>
   );
 }

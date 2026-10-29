@@ -1,8 +1,42 @@
+/* Шрифты подключаются из пакетов (не с Google), поэтому работают и без VPN */
+@import "@fontsource/nunito/latin-400.css";
+@import "@fontsource/nunito/cyrillic-400.css";
+@import "@fontsource/nunito/latin-600.css";
+@import "@fontsource/nunito/cyrillic-600.css";
+@import "@fontsource/nunito/latin-800.css";
+@import "@fontsource/nunito/cyrillic-800.css";
+@import "@fontsource/comfortaa/latin-700.css";
+@import "@fontsource/comfortaa/cyrillic-700.css";
+
 @import "tailwindcss";
 
 /* Не сканировать данные сервера на предмет CSS-классов */
 @source not "../data";
 @source not "../uploads";
+
+@theme {
+  --font-sans: 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Comfortaa', 'Nunito', system-ui, sans-serif;
+
+  /* Фирменные цвета */
+  --color-brand: #5d3eb0;
+  --color-brand-deep: #1f4097;
+  --color-lime: #abd141;
+  --color-santa: #da3d37;
+  --color-sky: #dce7ed;
+
+  /* Прежний «синий» теперь фирменный фиолетовый: все существующие кнопки, фокусы и значки перекрашиваются разом */
+  --color-blue-50: #f5f2fd;
+  --color-blue-100: #ebe5fa;
+  --color-blue-200: #d6cbf4;
+  --color-blue-300: #b9a8ea;
+  --color-blue-400: #9479da;
+  --color-blue-500: #7452c8;
+  --color-blue-600: #5d3eb0;
+  --color-blue-700: #4c3191;
+  --color-blue-800: #3e2875;
+  --color-blue-900: #2f1f58;
+}
 
 @layer base {
   :root {
@@ -10,11 +44,124 @@
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    background: linear-gradient(135deg, #f0f4ff 0%, #f8fafc 50%, #eff6ff 100%);
+    background: linear-gradient(180deg, #e6f1fb 0%, #f1eefb 55%, #faf7ff 100%) fixed;
     min-height: 100vh;
     color: #1e293b;
     margin: 0;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+  }
+}
+
+@layer components {
+  /* Главная кнопка: яркий салатовый, как на сказочных сайтах */
+  .btn-lime {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: var(--color-lime);
+    color: #26340a;
+    font-weight: 800;
+    border-radius: 9999px;
+    padding: 0.75rem 1.5rem;
+    box-shadow: 0 6px 0 #86a82a, 0 10px 18px rgba(31, 64, 151, 0.25);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .btn-lime:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+  }
+  .btn-lime:active {
+    transform: translateY(4px);
+    box-shadow: 0 2px 0 #86a82a, 0 4px 10px rgba(31, 64, 151, 0.2);
+  }
+
+  /* Шапка и герой: фиолетово-синий градиент со снегом */
+  .hero-bg {
+    background:
+      radial-gradient(circle at 15% 20%, rgba(171, 209, 65, 0.22), transparent 40%),
+      radial-gradient(circle at 85% 10%, rgba(218, 61, 55, 0.28), transparent 35%),
+      linear-gradient(135deg, #5d3eb0 0%, #3c3a9e 50%, #1f4097 100%);
+  }
+
+  /* Падающий снег: чистый CSS, без картинок и скриптов */
+  .snow {
+    position: relative;
+    overflow: hidden;
+  }
+  .snow::before,
+  .snow::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .snow::before {
+    background-image:
+      radial-gradient(2px 2px at 12% 18%, #fff 50%, transparent 52%),
+      radial-gradient(3px 3px at 48% 62%, #fff 50%, transparent 52%),
+      radial-gradient(2px 2px at 82% 38%, #fff 50%, transparent 52%),
+      radial-gradient(3px 3px at 30% 84%, #fff 50%, transparent 52%),
+      radial-gradient(2px 2px at 68% 8%, #fff 50%, transparent 52%);
+    background-size: 240px 240px;
+    opacity: 0.75;
+    animation: snow-a 16s linear infinite;
+  }
+  .snow::after {
+    background-image:
+      radial-gradient(4px 4px at 22% 30%, #fff 50%, transparent 55%),
+      radial-gradient(3px 3px at 74% 72%, #fff 50%, transparent 55%),
+      radial-gradient(4px 4px at 58% 14%, #fff 50%, transparent 55%);
+    background-size: 360px 360px;
+    opacity: 0.55;
+    animation: snow-b 26s linear infinite;
+  }
+  @keyframes snow-a {
+    from { background-position: 0 0; }
+    to { background-position: 40px 240px; }
+  }
+  @keyframes snow-b {
+    from { background-position: 0 0; }
+    to { background-position: -60px 360px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .snow::before,
+    .snow::after {
+      animation: none;
+    }
+  }
+
+  /* Карточки-кнопки на главной */
+  .menu-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    text-align: left;
+    padding: 1.25rem 1.25rem 1.1rem;
+    border-radius: 1.5rem;
+    color: #fff;
+    cursor: pointer;
+    overflow: hidden;
+    box-shadow: 0 10px 24px rgba(47, 31, 88, 0.18);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .menu-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 16px 30px rgba(47, 31, 88, 0.26);
+  }
+  .menu-card:active {
+    transform: translateY(0);
+  }
+  .menu-card .menu-emoji {
+    font-size: 2.4rem;
+    line-height: 1;
+    filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.25));
   }
 }
 

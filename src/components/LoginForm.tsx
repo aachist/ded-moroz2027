@@ -4,6 +4,7 @@ import { Loader2, Lock } from 'lucide-react';
 
 interface LoginFormProps {
   onSuccess: () => void;
+  onDark?: boolean; // ссылка на тёмном фоне (подвал сайта)
 }
 
 const ERRORS: Record<string, string> = {
@@ -14,7 +15,7 @@ const ERRORS: Record<string, string> = {
 };
 
 /** Небольшая ссылка «Вход для администратора» внизу страницы клиента. */
-export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
+export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onDark = false }) => {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -37,11 +38,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSuccess }) => {
 
   if (!open) {
     return (
-      <div className="text-center mt-10">
+      <div className="text-center mt-4">
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 cursor-pointer transition-colors"
+          className={`inline-flex items-center gap-1.5 text-xs cursor-pointer transition-colors ${
+            onDark ? 'text-white/50 hover:text-white/90' : 'text-slate-400 hover:text-slate-600'
+          }`}
         >
           <Lock className="w-3 h-3" />
           Вход для администратора
