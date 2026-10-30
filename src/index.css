@@ -7,6 +7,8 @@
 @import "@fontsource/nunito/cyrillic-800.css";
 @import "@fontsource/comfortaa/latin-700.css";
 @import "@fontsource/comfortaa/cyrillic-700.css";
+@import "@fontsource/marck-script/latin-400.css";
+@import "@fontsource/marck-script/cyrillic-400.css";
 
 @import "tailwindcss";
 
@@ -17,6 +19,7 @@
 @theme {
   --font-sans: 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Comfortaa', 'Nunito', system-ui, sans-serif;
+  --font-script: 'Marck Script', 'Nunito', cursive;
 
   /* Фирменные цвета */
   --color-brand: #5d3eb0;
@@ -134,6 +137,102 @@
     .snow::after {
       animation: none;
     }
+  }
+
+  /* Баннер главной: фото ёлки с игрушками под тёмно-фиолетовой вуалью, чтобы белый текст читался */
+  .hero-photo {
+    background:
+      radial-gradient(circle at 15% 20%, rgba(171, 209, 65, 0.16), transparent 40%),
+      linear-gradient(180deg, rgba(34, 18, 78, 0.38) 0%, rgba(22, 26, 78, 0.62) 100%),
+      url('/hero-tree.jpg') center / cover no-repeat;
+    background-color: #1f1a4a;
+  }
+  @media (max-width: 640px) {
+    .hero-photo {
+      background:
+        radial-gradient(circle at 15% 20%, rgba(171, 209, 65, 0.16), transparent 40%),
+        linear-gradient(180deg, rgba(34, 18, 78, 0.38) 0%, rgba(22, 26, 78, 0.62) 100%),
+        url('/hero-tree-sm.jpg') center / cover no-repeat;
+      background-color: #1f1a4a;
+    }
+  }
+
+  /* Отсчёт до Нового года: ночное небо, красные портьеры по краям, гирлянда */
+  .night-bg {
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(1.5px 1.5px at 10% 30%, #fff 50%, transparent 52%),
+      radial-gradient(1px 1px at 28% 62%, #fff 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 47% 22%, #fff 50%, transparent 52%),
+      radial-gradient(1px 1px at 63% 70%, #fff 50%, transparent 52%),
+      radial-gradient(1.5px 1.5px at 78% 35%, #fff 50%, transparent 52%),
+      radial-gradient(1px 1px at 90% 58%, #fff 50%, transparent 52%),
+      linear-gradient(180deg, #0a1a66 0%, #14307d 55%, #0b1b5a 100%);
+  }
+  .night-bg::before,
+  .night-bg::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 16%;
+    pointer-events: none;
+  }
+  .night-bg::before {
+    left: 0;
+    background: linear-gradient(to right, rgba(130, 16, 36, 0.9), rgba(130, 16, 36, 0));
+  }
+  .night-bg::after {
+    right: 0;
+    background: linear-gradient(to left, rgba(130, 16, 36, 0.9), rgba(130, 16, 36, 0));
+  }
+
+  .garland {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 4%;
+    border-top: 2px solid rgba(0, 0, 0, 0.45);
+  }
+  .bulb {
+    width: 15px;
+    height: 22px;
+    margin-top: -1px;
+    border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+    position: relative;
+    animation: twinkle 2.4s ease-in-out infinite;
+  }
+  .bulb::before {
+    /* цоколь лампочки */
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 50%;
+    width: 7px;
+    height: 6px;
+    transform: translateX(-50%);
+    background: #3b3b3b;
+    border-radius: 2px;
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 1; filter: brightness(1.15); }
+    50% { opacity: 0.45; filter: brightness(0.8); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bulb { animation: none; }
+  }
+
+  /* Золотой каллиграфический текст */
+  .gold-text {
+    font-family: var(--font-script);
+    background: linear-gradient(180deg, #fff6c8 0%, #f3d36b 45%, #c99a2e 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
   }
 
   /* Карточки-кнопки на главной */

@@ -1,5 +1,6 @@
 import React from 'react';
 import { PageKey, PAGE_LABELS } from '../nav';
+import { NewYearCountdown } from './NewYearCountdown';
 import { Phone } from 'lucide-react';
 
 interface HomePageProps {
@@ -56,8 +57,8 @@ const CARDS: CardDef[] = [
 
 export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin }) => (
   <div className="space-y-8">
-    {/* Баннер */}
-    <section className="hero-bg snow rounded-[2rem] text-white text-center px-5 py-10 sm:py-14 shadow-xl">
+    {/* Баннер: фото ёлки с игрушками */}
+    <section className="hero-photo snow rounded-[2rem] text-white text-center px-5 py-12 sm:py-20 shadow-xl">
       <div className="relative z-10 max-w-2xl mx-auto">
         <div className="text-5xl sm:text-6xl mb-3 drop-shadow-lg">🎅🎄</div>
         <h1 className="text-3xl sm:text-5xl font-bold leading-tight mb-3">Вызов Деда Мороза</h1>
@@ -89,6 +90,9 @@ export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin 
         </div>
       </div>
     </section>
+
+    {/* Отсчёт до Нового года */}
+    <NewYearCountdown />
 
     {/* Разделы */}
     <section>
