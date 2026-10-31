@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScheduleEvent } from '../types';
 import { ACTIVITY_TYPES, SELECTABLE_TYPES } from '../constants/types';
 import { Timeline } from './Timeline';
@@ -64,6 +64,14 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   }, [selectedDate]);
 
   const days: Date[] = Array.from({ length: 7 }, (_, i) => addDays(windowStart, i));
+
+  // На телефоне полоса дней прокручивается: выбранный день показываем по центру
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    stripRef.current
+      ?.querySelector('[data-active="true"]')
+      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [selectedKey]);
 
   const loadBusy = useCallback(async () => {
     const from = keyOf(startOfDay(new Date()));
@@ -236,7 +244,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <div className="flex-1 grid grid-cols-7 gap-1.5">
+          <div ref={stripRef} className="day-strip flex-1 grid grid-cols-7 gap-1.5">
             {days.map((d) => {
               const k = keyOf(d);
               const active = k === selectedKey;
@@ -245,8 +253,9 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                 <button
                   key={k}
                   type="button"
+                  data-active={active ? 'true' : undefined}
                   onClick={() => setSelectedDate(d)}
-                  className={`rounded-xl py-2 text-center border transition-all cursor-pointer ${
+                  className={`day-chip rounded-xl py-2 text-center border transition-all cursor-pointer ${
                     active
                       ? 'bg-blue-600 border-blue-600 text-white shadow-md'
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
@@ -259,7 +268,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                   <span className="block text-[10px] opacity-70">
                     {d.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')}
                   </span>
-                  <span className={`hidden sm:block text-[9px] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
+                  <span className={`block text-[9px] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
                     {busy ? (count ? `занято: ${count}` : 'свободно') : ' '}
                   </span>
                 </button>

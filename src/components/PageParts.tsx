@@ -23,14 +23,22 @@ export const PageShell: React.FC<{ title: string; onBack: () => void; children: 
 );
 
 /** Подвал: быстрые контакты на любой странице. */
-export const SiteFooter: React.FC<{ contacts: Contacts; children?: React.ReactNode }> = ({ contacts, children }) => {
+export const SiteFooter: React.FC<{
+  contacts: Contacts;
+  children?: React.ReactNode;
+  extraBottom?: boolean; // на телефоне оставляем место под нижнюю панель навигации
+  viewSwitch?: { label: string; onClick: () => void }; // «Версия для компьютера» / «Мобильная версия»
+}> = ({ contacts, children, extraBottom = false, viewSwitch }) => {
   const tel = telHref(contacts.phone);
   const tg = telegramHref(contacts.telegram);
   const linkCls =
-    'inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 hover:bg-white/25 text-sm font-bold cursor-pointer';
+    'inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-white/15 hover:bg-white/25 text-sm font-bold cursor-pointer';
   return (
     <footer className="mt-14 hero-bg text-white">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 text-center">
+      <div
+        className="max-w-5xl mx-auto px-4 sm:px-6 pt-8 text-center"
+        style={{ paddingBottom: extraBottom ? 'calc(6rem + env(safe-area-inset-bottom))' : '2rem' }}
+      >
         <div className="font-display font-bold text-xl mb-1">🎅 Вызов Деда Мороза</div>
         <p className="text-sm text-white/80 mb-4">Волшебство, в которое верят и дети, и взрослые</p>
         {(tel || tg || contacts.email) && (
@@ -56,6 +64,17 @@ export const SiteFooter: React.FC<{ contacts: Contacts; children?: React.ReactNo
           </div>
         )}
         {children}
+        {viewSwitch && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={viewSwitch.onClick}
+              className="text-xs text-white/60 hover:text-white/90 underline underline-offset-2 cursor-pointer py-2"
+            >
+              {viewSwitch.label}
+            </button>
+          </div>
+        )}
       </div>
     </footer>
   );

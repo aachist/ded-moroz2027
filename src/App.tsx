@@ -23,6 +23,8 @@ import { ClientScheduleView } from './components/ClientScheduleView';
 import { MediaGallery } from './components/MediaGallery';
 import { HelpView } from './components/HelpView';
 import { LoginForm } from './components/LoginForm';
+import { MobileHeader, BottomNav, MobileMenu } from './components/MobileShell';
+import { useDevice } from './utils/device';
 
 // Все устройства работают в одном общем пространстве: коды синхронизации не нужны
 const syncCode = WORKSPACE_CODE;
@@ -36,6 +38,10 @@ export default function App() {
   const [authConfigured, setAuthConfigured] = useState(true);
 
   const [page, setPage] = useHashPage(role === 'admin' ? ADMIN_PAGES : CLIENT_PAGES);
+
+  // Определение устройства: с телефона сайт показывает мобильную версию
+  const { isMobile, isPhone, mode, setMode } = useDevice();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const [schedule, setSchedule] = useState<DaySchedule>({});
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
@@ -307,12 +313,69 @@ export default function App() {
     }
   };
 
+  const adminBanner =
+    isAdmin && !authConfigured ? (
+      <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-sm px-4 py-3">
+        ⚠️ <b>Пароль администратора не задан: сейчас сайт открыт всем, у кого есть ссылка.</b> Добавьте переменную{' '}
+        <code className="font-mono">ADMIN_PASSWORD</code> в Vercel (Settings → Environment Variables) и нажмите
+        Redeploy.
+      </div>
+    ) : null;
+
+  // Переключатель вида внизу страницы: «Версия для компьютера» / «Мобильная версия»
+  const viewSwitch = isMobile
+    ? { label: 'Версия для компьютера', onClick: () => setMode('desktop') }
+    : isPhone || mode === 'desktop'
+    ? { label: 'Мобильная версия', onClick: () => setMode('auto') }
+    : undefined;
+
+  const pages = isAdmin ? ADMIN_PAGES : CLIENT_PAGES;
+
+  // ---- Мобильная версия: компактная шапка, нижняя панель, меню-шторка ----
+  if (isMobile) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <MobileHeader setPage={setPage} phoneHref={phoneHref} isAdmin={isAdmin} />
+
+        <main className="flex-1 w-full px-3 pt-4">
+          {adminBanner}
+          {renderPage(page)}
+        </main>
+
+        <SiteFooter contacts={content.contacts} extraBottom viewSwitch={viewSwitch} />
+
+        <BottomNav page={page} setPage={setPage} menuOpen={menuOpen} onMenu={() => setMenuOpen(true)} />
+        <MobileMenu
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          page={page}
+          setPage={setPage}
+          pages={pages}
+          isAdmin={isAdmin}
+          onLogout={authConfigured ? handleLogout : undefined}
+          syncStatus={syncStatus}
+          onDesktopVersion={() => setMode('desktop')}
+        >
+          {!isAdmin && (
+            <LoginForm
+              onSuccess={async () => {
+                await handleLoginSuccess();
+                setMenuOpen(false);
+              }}
+            />
+          )}
+        </MobileMenu>
+      </div>
+    );
+  }
+
+  // ---- Версия для компьютера ----
   return (
     <div className="min-h-screen flex flex-col">
       <SiteHeader
         page={page}
         setPage={setPage}
-        pages={isAdmin ? ADMIN_PAGES : CLIENT_PAGES}
+        pages={pages}
         phoneHref={phoneHref}
         isAdmin={isAdmin}
         syncStatus={syncStatus}
@@ -321,17 +384,11 @@ export default function App() {
       />
 
       <main className="flex-1 w-full max-w-5xl mx-auto px-3 sm:px-6 py-6 sm:py-8">
-        {isAdmin && !authConfigured && (
-          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-sm px-4 py-3">
-            ⚠️ <b>Пароль администратора не задан: сейчас сайт открыт всем, у кого есть ссылка.</b> Добавьте переменную{' '}
-            <code className="font-mono">ADMIN_PASSWORD</code> в Vercel (Settings → Environment Variables) и нажмите
-            Redeploy.
-          </div>
-        )}
+        {adminBanner}
         {renderPage(page)}
       </main>
 
-      <SiteFooter contacts={content.contacts}>
+      <SiteFooter contacts={content.contacts} viewSwitch={viewSwitch}>
         {!isAdmin && <LoginForm onSuccess={handleLoginSuccess} onDark />}
       </SiteFooter>
     </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DaySchedule, ScheduleEvent } from '../types';
 import { ACTIVITY_TYPES, SELECTABLE_TYPES } from '../constants/types';
 import { Booking } from '../utils/bookings';
@@ -68,6 +68,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   for (let i = 0; i < 7; i++) {
     daysList.push(addDays(shownStart, i));
   }
+
+  // На телефоне полоса дней прокручивается: выбранный день всегда показываем по центру
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    stripRef.current
+      ?.querySelector('[data-active="true"]')
+      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [selectedDate.getTime()]);
   const rangeLabel = `${daysList[0].toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'long',
@@ -223,7 +231,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           <ChevronLeft className="w-5 h-5" />
         </button>
 
-        <div className="flex gap-2 flex-1 justify-center min-w-0">
+        <div ref={stripRef} className="day-strip flex gap-2 flex-1 justify-center min-w-0">
           {daysList.map((d) => {
             const key = formatDateKey(d);
             const isSelected = key === selectedKey;
@@ -234,8 +242,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               <button
                 key={key}
                 type="button"
+                data-active={isSelected ? 'true' : undefined}
                 onClick={() => setSelectedDate(d)}
-                className={`relative px-3 py-2.5 rounded-2xl border text-center transition-all min-w-[64px] sm:min-w-[80px] cursor-pointer ${
+                className={`day-chip relative px-3 py-2.5 rounded-2xl border text-center transition-all min-w-[64px] sm:min-w-[80px] cursor-pointer ${
                   isSelected
                     ? 'border-blue-500 bg-blue-600 text-white shadow-md shadow-blue-500/25 scale-[1.02]'
                     : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'

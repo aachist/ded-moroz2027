@@ -58,7 +58,7 @@ const CARDS: CardDef[] = [
 export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin }) => (
   <div className="space-y-8">
     {/* Баннер: фото ёлки с игрушками */}
-    <section className="hero-photo snow rounded-[2rem] text-white text-center px-5 py-12 sm:py-20 shadow-xl">
+    <section className="hero-photo hero-banner snow rounded-[2rem] text-white text-center px-5 py-12 sm:py-20 shadow-xl">
       <div className="relative z-10 max-w-2xl mx-auto">
         <div className="text-5xl sm:text-6xl mb-3 drop-shadow-lg">🎅🎄</div>
         <h1 className="text-3xl sm:text-5xl font-bold leading-tight mb-3">Вызов Деда Мороза</h1>
@@ -66,13 +66,13 @@ export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin 
           Настоящая встреча с волшебством для детей и взрослых. Выберите удобное время, и праздник придёт к вам!
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <button type="button" onClick={() => setPage('schedule')} className="btn-lime text-base">
+          <button type="button" onClick={() => setPage('schedule')} className="btn-lime hero-cta text-base">
             📅 Записаться на вызов
           </button>
           {phoneHref ? (
             <a
               href={phoneHref}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-white/15 hover:bg-white/25 font-bold border border-white/30 cursor-pointer"
+              className="hero-cta inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-white/15 hover:bg-white/25 font-bold border border-white/30 cursor-pointer"
             >
               <Phone className="w-4 h-4" />
               Позвонить Деду Морозу
@@ -81,7 +81,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin 
             <button
               type="button"
               onClick={() => setPage('contacts')}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-white/15 hover:bg-white/25 font-bold border border-white/30 cursor-pointer"
+              className="hero-cta inline-flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-white/15 hover:bg-white/25 font-bold border border-white/30 cursor-pointer"
             >
               <Phone className="w-4 h-4" />
               Позвонить Деду Морозу
@@ -97,7 +97,7 @@ export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin 
     {/* Разделы */}
     <section>
       <h2 className="text-2xl font-bold text-brand-deep text-center mb-5">Всё о встрече с Дедом Морозом</h2>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="home-grid grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {CARDS.map((c) => (
           <button
             key={c.page}
@@ -107,9 +107,9 @@ export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin 
             style={{ background: c.gradient }}
           >
             <span className="menu-emoji">{c.emoji}</span>
-            <span className="font-display font-bold text-lg leading-snug">{PAGE_LABELS[c.page]}</span>
-            <span className="text-sm text-white/85 leading-snug">{c.hint}</span>
-            <span className="absolute -right-3 -bottom-4 text-8xl opacity-10 select-none">{c.emoji}</span>
+            <span className="menu-text"><span className="font-display font-bold text-lg leading-snug">{PAGE_LABELS[c.page]}</span>
+            <span className="text-sm text-white/85 leading-snug">{c.hint}</span></span>
+            <span className="menu-watermark absolute -right-3 -bottom-4 text-8xl opacity-10 select-none">{c.emoji}</span>
           </button>
         ))}
       </div>

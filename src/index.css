@@ -262,6 +262,11 @@
     line-height: 1;
     filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.25));
   }
+  .menu-card .menu-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
 }
 
 /* Custom scrollbars */
@@ -278,4 +283,97 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+/* =====================================================================
+   Мобильная версия: включается атрибутом data-device="mobile" на <html>
+   (ставится скриптом в index.html и хуком useDevice по определению телефона).
+   Правила вне @layer, поэтому перекрывают обычные классы Tailwind.
+   ===================================================================== */
+[data-device="mobile"] body {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 16px в полях ввода: иначе iPhone приближает страницу при вводе. Удобная высота для пальца. */
+[data-device="mobile"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+[data-device="mobile"] select {
+  font-size: 16px;
+  min-height: 46px;
+}
+[data-device="mobile"] textarea {
+  font-size: 16px;
+}
+
+/* Главная: карточки-кнопки в один столбец, компактно (иконка слева, текст справа) */
+[data-device="mobile"] .home-grid {
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+[data-device="mobile"] .menu-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.95rem 1.1rem;
+  border-radius: 1.25rem;
+}
+[data-device="mobile"] .menu-card .menu-emoji {
+  font-size: 2rem;
+  flex-shrink: 0;
+}
+[data-device="mobile"] .menu-card .menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+[data-device="mobile"] .menu-card .menu-watermark {
+  display: none;
+}
+[data-device="mobile"] .hero-banner {
+  padding: 2rem 1.1rem;
+  border-radius: 1.5rem;
+}
+[data-device="mobile"] .hero-cta {
+  width: 100%;
+}
+
+/* Экономим батарею и процессор телефона: один слой снега вместо двух */
+[data-device="mobile"] .snow::after {
+  display: none;
+}
+
+/* Полоса дней: прокручивается пальцем, крупные цели нажатия */
+[data-device="mobile"] .day-strip {
+  display: flex;
+  justify-content: flex-start;
+  overflow-x: auto;
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+[data-device="mobile"] .day-strip::-webkit-scrollbar {
+  display: none;
+}
+[data-device="mobile"] .day-chip {
+  flex: 0 0 auto;
+  min-width: 64px;
+  scroll-snap-align: center;
+}
+
+/* Нижняя панель и меню-шторка (мобильная навигация) */
+.bottom-nav {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.sheet-enter {
+  animation: sheet-up 0.22s ease-out;
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet-enter { animation: none; }
 }

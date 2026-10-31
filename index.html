@@ -2,20 +2,37 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Запись на вызов Деда Мороза</title>
-    <meta name="description" content="Интерактивное расписание на неделю с временной шкалой, синхронизацией и медиа-галереей для фото и видео без внешних ключей." />
-    <meta property="og:title" content="Запись на вызов Деда Мороза" />
-    <meta property="og:description" content="Интерактивное расписание на неделю с временной шкалой, синхронизацией и медиа-галереей для фото и видео без внешних ключей." />
+    <!-- viewport-fit=cover: контент учитывает «чёлку» и нижнюю полосу жестов на телефонах -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#5d3eb0" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Вызов Деда Мороза</title>
+    <meta name="description" content="Вызов Деда Мороза: запишитесь на свободное время, посмотрите примеры встреч, варианты, правила и отзывы." />
+    <meta property="og:title" content="Вызов Деда Мороза" />
+    <meta property="og:description" content="Запишитесь на свободное время, посмотрите примеры встреч, варианты, правила и отзывы." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Определение телефона ДО отрисовки страницы (чтобы вёрстка не «прыгала»).
+      // Должно совпадать с src/utils/device.ts
+      (function () {
+        try {
+          var mode = localStorage.getItem('viewMode');
+          var uad = navigator.userAgentData;
+          var phone =
+            (uad && uad.mobile === true) ||
+            /Android.*Mobile|iPhone|iPod|Windows Phone|IEMobile|BlackBerry|Opera Mini|webOS|\bMobi\b/i.test(navigator.userAgent || '');
+          var narrow = !!(window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+          var mobile = mode === 'mobile' ? true : mode === 'desktop' ? false : phone || narrow;
+          document.documentElement.setAttribute('data-device', mobile ? 'mobile' : 'desktop');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
