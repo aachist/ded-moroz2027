@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { Suspense, lazy, useEffect, useState, useCallback, useRef } from 'react';
 import { DaySchedule, MediaItem } from './types';
 import {
   WORKSPACE_CODE,
@@ -18,13 +18,27 @@ import { PageShell, SiteFooter } from './components/PageParts';
 import { ContentPage } from './components/ContentPage';
 import { ContactsPage } from './components/ContactsPage';
 import { ReviewsPage } from './components/ReviewsPage';
-import { ScheduleView } from './components/ScheduleView';
 import { ClientScheduleView } from './components/ClientScheduleView';
 import { MediaGallery } from './components/MediaGallery';
-import { HelpView } from './components/HelpView';
 import { LoginForm } from './components/LoginForm';
 import { MobileHeader, BottomNav, MobileMenu } from './components/MobileShell';
 import { useDevice } from './utils/device';
+
+// Админские страницы (расписание, инструкция с копиями) — отдельные файлы: клиенты их не загружают,
+// они подгружаются только после входа по паролю.
+const ScheduleView = lazy(() => import('./components/ScheduleView').then((m) => ({ default: m.ScheduleView })));
+const HelpView = lazy(() => import('./components/HelpView').then((m) => ({ default: m.HelpView })));
+const adminFallback = <div className="py-16 text-center text-slate-400 text-sm">Загрузка…</div>;
+const AdminScheduleView = (props: React.ComponentProps<typeof ScheduleView>) => (
+  <Suspense fallback={adminFallback}>
+    <ScheduleView {...props} />
+  </Suspense>
+);
+const AdminHelpView = (props: React.ComponentProps<typeof HelpView>) => (
+  <Suspense fallback={adminFallback}>
+    <HelpView {...props} />
+  </Suspense>
+);
 
 // Все устройства работают в одном общем пространстве: коды синхронизации не нужны
 const syncCode = WORKSPACE_CODE;
@@ -233,7 +247,7 @@ export default function App() {
         return (
           <PageShell title={PAGE_LABELS.schedule} onBack={() => setPage('home')}>
             {isAdmin ? (
-              <ScheduleView
+              <AdminScheduleView
                 schedule={schedule}
                 onUpdateSchedule={handleUpdateSchedule}
                 selectedDate={selectedDate}
@@ -300,7 +314,7 @@ export default function App() {
       case 'help':
         return (
           <PageShell title={PAGE_LABELS.help} onBack={() => setPage('home')}>
-            <HelpView
+            <AdminHelpView
               schedule={schedule}
               onUpdateSchedule={handleUpdateSchedule}
               mediaList={mediaList}

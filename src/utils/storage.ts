@@ -1,13 +1,11 @@
 import { DaySchedule, MediaItem, StorageConfig } from '../types';
 import { compressImage } from './videoThumb';
-import {
-  fbFetchSchedule,
-  fbSaveSchedule,
-  fbSavePhoto,
-  fbFetchMedia,
-  fbDeleteMedia,
-  RemoteSchedule,
-} from './firebaseSync';
+
+/** Версия расписания с меткой времени (локальная или с сервера). */
+export interface RemoteSchedule {
+  data: DaySchedule;
+  updatedAt: number;
+}
 
 const SCHEDULE_KEY = 'weekSchedule';
 const STORAGE_CONFIG_KEY = 'storage_config_settings';
@@ -131,9 +129,9 @@ export async function idbDeleteMedia(id: string): Promise<void> {
   }
 }
 
-/* ================= Schedule Sync (Multi-tier: Local -> Server -> Firebase) ================= */
+/* ================= Синхронизация расписания (браузер <-> сервер) ================= */
 // У каждой копии расписания есть метка времени updatedAt. При загрузке выигрывает
-// самая свежая версия (локальная / Firebase / сервер), а не "первая, что ответила".
+// самая свежая версия (локальная / сервер), а не "первая, что ответила".
 // Раньше удалённая (часто устаревшая) копия затирала только что внесённые правки.
 const scheduleKey = (code: string) => `${SCHEDULE_KEY}:${code}`;
 const dirtyKey = (code: string) => `${SCHEDULE_KEY}:dirty:${code}`;
@@ -247,20 +245,15 @@ async function serverSaveSchedule(code: string, schedule: DaySchedule, updatedAt
 }
 
 /**
- * Отправляет расписание в Firebase и на сервер.
- * Возвращает true, если хотя бы одно удалённое хранилище подтвердило запись.
+ * Отправляет расписание на сервер (Vercel API).
+ * Возвращает true, если сервер подтвердил запись.
  */
 export async function pushScheduleRemote(
   syncCode: string,
   schedule: DaySchedule,
   updatedAt: number
 ): Promise<boolean> {
-  // Сначала собственный сервер (Vercel API / локальный сервер): он работает без VPN.
-  // Firebase — только запасной вариант, если сервер недоступен.
-  let ok = await serverSaveSchedule(syncCode, schedule, updatedAt);
-  if (!ok) {
-    ok = await fbSaveSchedule(syncCode, schedule, updatedAt).catch(() => false);
-  }
+  const ok = await serverSaveSchedule(syncCode, schedule, updatedAt);
   if (ok) {
     // Не сбрасываем флаг, если за время отправки появилась более новая правка
     try {
@@ -277,24 +270,16 @@ const lastHeal: Record<string, { updatedAt: number; at: number }> = {};
 export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
   const local = await readLocalSchedule(syncCode);
 
-  // Сначала свой сервер. Firebase опрашиваем, только если сервер недоступен
-  // или ещё пуст (перенос старых данных) — так без VPN нет ожидания таймаута.
+  // Свой сервер (Vercel API) и локальная копия в браузере: берём самую свежую версию
   const srv = await serverFetchSchedule(syncCode);
-  const needFirebase = !srv || (srv.updatedAt === 0 && isEmptySchedule(srv.data));
-  const fb = needFirebase ? await fbFetchSchedule(syncCode).catch(() => null) : null;
 
   // Выбираем самую свежую версию; при равенстве предпочитаем непустую
-  let best: RemoteSchedule & { source: 'firebase' | 'server' | 'local' } = { ...local, source: 'local' };
-  const candidates: Array<[RemoteSchedule | null, 'firebase' | 'server']> = [
-    [fb, 'firebase'],
-    [srv, 'server'],
-  ];
-  for (const [c, source] of candidates) {
-    if (!c) continue;
-    const newer = c.updatedAt > best.updatedAt;
+  let best: RemoteSchedule & { source: 'server' | 'local' } = { ...local, source: 'local' };
+  if (srv) {
+    const newer = srv.updatedAt > best.updatedAt;
     const tieButFilled =
-      c.updatedAt === best.updatedAt && isEmptySchedule(best.data) && !isEmptySchedule(c.data);
-    if (newer || tieButFilled) best = { ...c, source };
+      srv.updatedAt === best.updatedAt && isEmptySchedule(best.data) && !isEmptySchedule(srv.data);
+    if (newer || tieButFilled) best = { ...srv, source: 'server' };
   }
 
   // Данные без метки времени (старый формат) получают её, чтобы их можно было синхронизировать
@@ -307,7 +292,7 @@ export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
     if (best.source === 'local') local.updatedAt = best.updatedAt;
   }
 
-  // Свой сервер пуст или отстаёт, а у нас (в браузере или Firebase) есть более свежее — переносим туда
+  // Свой сервер пуст или отстаёт, а у нас (в браузере) есть более свежее — переносим туда
   if (
     srv &&
     best.source !== 'server' &&
@@ -320,14 +305,14 @@ export async function fetchSchedule(syncCode: string): Promise<DaySchedule> {
   if (best.source !== 'local') {
     writeLocalSchedule(syncCode, best.data, best.updatedAt);
   } else {
-    // Локальная версия самая свежая — догоняем удалённые хранилища, если они отстали
+    // Локальная версия самая свежая — догоняем сервер, если он отстал
     let dirty = false;
     try {
       dirty = localStorage.getItem(dirtyKey(syncCode)) === '1';
     } catch (e) {}
-    const behind = [fb, srv].some((r) => r && r.updatedAt < local.updatedAt);
+    const behind = !!srv && srv.updatedAt < local.updatedAt;
     if (local.updatedAt > 0 && (dirty || behind)) {
-      // Не чаще раза в 5 минут для одной и той же версии, иначе при недоступном Firebase
+      // Не чаще раза в 5 минут для одной и той же версии, иначе при недоступном сервере
       // каждый опрос (раз в 20 с) заново отправлял бы данные
       const last = lastHeal[syncCode];
       const now = Date.now();
@@ -350,7 +335,7 @@ export async function saveSchedule(syncCode: string, schedule: DaySchedule): Pro
 /* ================= Media API (100% Guaranteed Local-First with Background Sync) ================= */
 /**
  * Подпись фото для поиска дублей: старая версия сохраняла одно фото под двумя id
- * (локальным и сгенерированным Firebase). Содержимое у них одинаковое.
+ * (локальным и сгенерированным в старой версии сайта). Содержимое у них одинаковое.
  */
 function photoSignature(m: MediaItem): string | null {
   if (m.type !== 'photo') return null;
@@ -470,34 +455,28 @@ export async function fetchMediaList(
     byId.set(m.id, m);
   }
 
-  // 2–3. Firebase (работает с VPN) и свой сервер (Vercel API) опрашиваем параллельно
+  // 2. Список файлов с собственного сервера (Vercel API)
   const serverIds = new Set<string>();
-  const [fbItems, serverData] = await Promise.all([
-    readOnly ? Promise.resolve([] as MediaItem[]) : fbFetchMedia(syncCode).catch(() => [] as MediaItem[]),
-    (async (): Promise<{ items: MediaItem[]; deleted: string[] } | null> => {
-      try {
-        const res = await fetch(`/api/media-list/${syncCode}`, { cache: 'no-store' });
-        if (!res.ok) return null;
-        if (!(res.headers.get('content-type') || '').includes('application/json')) return null;
-        const json = await res.json();
-        return {
-          items: Array.isArray(json.items) ? (json.items as MediaItem[]) : [],
-          deleted: Array.isArray(json.deleted) ? json.deleted.map(String) : [],
-        };
-      } catch (e) {
-        return null;
-      }
-    })(),
-  ]);
+  const serverData = await (async (): Promise<{ items: MediaItem[]; deleted: string[] } | null> => {
+    try {
+      const res = await fetch(`/api/media-list/${syncCode}`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      if (!(res.headers.get('content-type') || '').includes('application/json')) return null;
+      const json = await res.json();
+      return {
+        items: Array.isArray(json.items) ? (json.items as MediaItem[]) : [],
+        deleted: Array.isArray(json.deleted) ? json.deleted.map(String) : [],
+      };
+    } catch (e) {
+      return null;
+    }
+  })();
   const serverItems = serverData ? serverData.items : null;
 
   const serverUrlById = new Map<string, string>();
   for (const item of serverItems || []) {
     serverIds.add(item.id);
     if (item.url) serverUrlById.set(item.id, item.url);
-    if (!byId.has(item.id)) byId.set(item.id, item);
-  }
-  for (const item of fbItems) {
     if (!byId.has(item.id)) byId.set(item.id, item);
   }
 
@@ -539,7 +518,7 @@ export async function fetchMediaList(
       continue;
     }
 
-    // Предпочитаем вариант из Firebase: он есть в облаке и совпадает на всех устройствах
+    // Предпочитаем вариант с пометкой старого облака: он совпадает на всех устройствах
     const keepNew = m.storageSource === 'firebase' && twin.storageSource !== 'firebase';
     const winner = keepNew ? m : twin;
     const loser = keepNew ? twin : m;
@@ -590,7 +569,7 @@ export async function fetchMediaList(
  * Uploads photo or video with ZERO chance of 404 or timeout errors!
  * 1. Photo is compressed and saved immediately into IndexedDB & state.
  * 2. Video is stored as Blob directly in IndexedDB with an instant Canvas thumbnail.
- * 3. Background sync pushes to server and/or Firebase without blocking the UI.
+ * 3. Фоновая выгрузка в облако не блокирует интерфейс.
  */
 export async function uploadMediaFile(
   file: File,
@@ -642,14 +621,7 @@ export async function uploadMediaFile(
     await idbSaveMedia(mediaItem);
     onProgress?.(90);
 
-    // 2. Background sync to Firebase if available (with VPN)
-    fbSavePhoto(syncCode, photoDataUrl, file.name, id, mediaItem.created).then((fbId) => {
-      if (fbId) {
-        mediaItem.storageSource = 'firebase';
-      }
-    }).catch(() => {});
-
-    // 3. Фоновая выгрузка в облако (Vercel Blob), без блокировки интерфейса
+    // 2. Фоновая выгрузка в облако (Vercel Blob), без блокировки интерфейса
     backgroundUpload(file, syncCode, mediaItem).catch(() => {});
 
     onProgress?.(100);
@@ -929,7 +901,7 @@ async function uploadToServerBackground(file: File, syncCode: string, item: Medi
 }
 
 /**
- * Deletes media item from IndexedDB, server, and Firebase
+ * Удаляет файл из локальной базы и с сервера (вместе с файлом в облаке)
  */
 export async function deleteMediaItem(syncCode: string, item: MediaItem): Promise<boolean> {
   // Вместе с фото удаляем его скрытые копии (дубли от старых загрузок)
@@ -948,10 +920,7 @@ export async function deleteMediaItem(syncCode: string, item: MediaItem): Promis
     // 1. Delete from IndexedDB immediately
     await idbDeleteMedia(target.id);
 
-    // 2. Delete from Firebase
-    fbDeleteMedia(target.id).catch(() => {});
-
-    // 3. Файл на старом локальном сервере (если был)
+    // 2. Файл на старом локальном сервере (если был)
     if (target.filename) {
       fetch(`/api/media/${target.filename}`, { method: 'DELETE' }).catch(() => {});
     }
