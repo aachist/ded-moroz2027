@@ -10,6 +10,7 @@ import {
   LoadedBackup,
 } from '../utils/backup';
 import type { Booking } from '../utils/bookings';
+import { TelegramSetup } from './TelegramSetup';
 import { Download, Upload, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface HelpViewProps {
@@ -213,6 +214,14 @@ export const HelpView: React.FC<HelpViewProps> = ({
             альбомов нужна отдельная доработка.
           </li>
         </ul>
+      </Card>
+
+      <Card title="Уведомления в Telegram">
+        <p className="text-sm text-slate-600 mb-3 leading-relaxed">
+          О новых заявках и отзывах клиентов вам будет приходить сообщение в Telegram: с именем, телефоном, временем и
+          ссылкой на сайт. Не нужно открывать сайт, чтобы узнать о заявке.
+        </p>
+        <TelegramSetup syncCode={syncCode} />
       </Card>
 
       <Card title="Резервная копия">

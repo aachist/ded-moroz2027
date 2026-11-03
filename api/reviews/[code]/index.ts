@@ -40,6 +40,35 @@ async function redis(cmd: Array<string | number>): Promise<any> {
   return j.result;
 }
 
+/* ---------- Уведомления владельцу в Telegram (необязательно) ---------- */
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const siteUrl = () =>
+  process.env.SITE_URL ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '');
+
+/** Шлёт сообщение в Telegram, если бот подключён. Любой сбой молча игнорируется: отзыв это не отменяет. */
+async function notifyTelegram(code: string, html: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  try {
+    let chatId = (process.env.TELEGRAM_CHAT_ID || '').trim();
+    if (!/^-?\d{3,20}$/.test(chatId)) chatId = String((await redis(['GET', `telegram-chat:${code}`])) || '');
+    if (!/^-?\d{3,20}$/.test(chatId)) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3500);
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {}
+}
+
 function clientIp(req: any): string {
   const xf = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
   return xf || String(req.socket?.remoteAddress || 'unknown');
@@ -134,6 +163,21 @@ export default async function handler(req: any, res: any) {
         status: admin ? 'approved' : 'pending',
       };
       await redis(['HSET', key, review.id, JSON.stringify(review)]);
+
+      // Сообщение владельцу в Telegram: отзыв клиента ждёт проверки (сбой Telegram отзыв не отменяет)
+      if (!admin) {
+        await notifyTelegram(
+          code,
+          [
+            '💬 <b>Новый отзыв ждёт проверки</b>',
+            `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}  ${esc(name)}`,
+            esc(text.length > 300 ? `${text.slice(0, 300)}…` : text),
+            siteUrl() ? `\n<a href="${siteUrl()}/#reviews">Открыть отзывы</a>` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+        );
+      }
       return res.status(201).json(admin ? review : { ok: true, pending: true });
     }
 

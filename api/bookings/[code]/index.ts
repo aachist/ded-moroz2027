@@ -55,6 +55,37 @@ const toMin = (t: string) => {
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* ---------- Уведомления владельцу в Telegram (необязательно) ---------- */
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const siteUrl = () =>
+  process.env.SITE_URL ||
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '');
+const dateRu = (d: string) =>
+  new Date(`${d}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short', timeZone: 'UTC' });
+
+/** Шлёт сообщение в Telegram, если бот подключён. Любой сбой молча игнорируется: заявку это не отменяет. */
+async function notifyTelegram(code: string, html: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  try {
+    let chatId = (process.env.TELEGRAM_CHAT_ID || '').trim();
+    if (!/^-?\d{3,20}$/.test(chatId)) chatId = String((await redis(['GET', `telegram-chat:${code}`])) || '');
+    if (!/^-?\d{3,20}$/.test(chatId)) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3500);
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {}
+}
+
 function clientIp(req: any): string {
   const xf = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
   return xf || String(req.socket?.remoteAddress || 'unknown');
@@ -177,12 +208,13 @@ export default async function handler(req: any, res: any) {
         return res.status(503).json({ error: 'busy_lock', message: 'Сервер занят, повторите через секунду.' });
       }
 
+      let booking: any = null;
       try {
         const busy = await busyForDate(code, date);
         if (busy.some((x) => s < x.e && x.s < e)) {
           return res.status(409).json({ error: 'busy', message: 'Это время уже занято. Выберите свободное.' });
         }
-        const booking = {
+        booking = {
           id: `${Date.now()}-${randomBytes(4).toString('hex')}`,
           date,
           start,
@@ -194,12 +226,28 @@ export default async function handler(req: any, res: any) {
           createdAt: Date.now(),
         };
         await redis(['HSET', key, booking.id, JSON.stringify(booking)]);
-        return res.status(201).json(booking);
       } finally {
         try {
           await redis(['DEL', lockKey]);
         } catch {}
       }
+
+      // Сообщение владельцу в Telegram (блокировка уже снята; сбой Telegram заявку не отменяет)
+      await notifyTelegram(
+        code,
+        [
+          '🎅 <b>Новая заявка на вызов</b>',
+          `📅 ${esc(dateRu(date))}, <b>${start}–${end}</b>`,
+          `🎭 ${type === 'kids' ? 'Дети' : 'Взрослые'}`,
+          `👤 ${esc(name)}`,
+          `📞 ${esc(phone)}`,
+          note ? `📝 ${esc(note)}` : '',
+          siteUrl() ? `\n<a href="${siteUrl()}/#schedule">Открыть расписание</a>` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
+      return res.status(201).json(booking);
     }
 
     res.setHeader('Allow', 'GET, POST');
