@@ -12,6 +12,7 @@ interface ScheduleViewProps {
   setSelectedDate: (date: Date) => void;
   bookings?: Booking[]; // заявки клиентов с сайта
   onDeleteBooking?: (id: string) => Promise<boolean>;
+  onUpdateBooking?: (id: string, status: 'confirmed' | 'declined', reason?: string) => Promise<boolean>;
 }
 
 function formatDateKey(d: Date): string {
@@ -34,6 +35,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   setSelectedDate,
   bookings = [],
   onDeleteBooking,
+  onUpdateBooking,
 }) => {
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
@@ -95,14 +97,47 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       note: [b.name, b.phone, b.note].filter(Boolean).join(' · '),
       fromClient: true,
       bookingId: b.id,
+      bookingStatus: b.status || 'confirmed', // у старых заявок статуса нет: они считаются подтверждёнными
     }));
-  const displayEvents: ScheduleEvent[] = [...currentEvents, ...bookingEvents];
+  // Отклонённые заявки время не занимают: на шкалу, в проверку пересечений и в итоги они не идут,
+  // но в списке остаются (затемнёнными), чтобы можно было посмотреть и удалить.
+  const activeEvents: ScheduleEvent[] = [
+    ...currentEvents,
+    ...bookingEvents.filter((e) => e.bookingStatus !== 'declined'),
+  ];
+  const displayEvents: ScheduleEvent[] = activeEvents;
+  const listEvents: ScheduleEvent[] = [...currentEvents, ...bookingEvents];
 
-  // Ближайшие заявки с сайта (для быстрого перехода)
+  // Заявки, ждущие подтверждения (с сегодняшнего дня): быстрые кнопки наверху страницы
   const todayKey = formatDateKey(new Date());
   const upcomingBookings = bookings
-    .filter((b) => b.date >= todayKey)
+    .filter((b) => b.date >= todayKey && (b.status || 'confirmed') === 'pending')
     .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+
+  // Решение по заявке: подтвердить сразу, отклонить — с необязательной причиной
+  const [declineTarget, setDeclineTarget] = useState<{ id: string; label: string } | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
+  const [deciding, setDeciding] = useState<string | null>(null);
+
+  const confirmBooking = async (id: string) => {
+    if (!onUpdateBooking) return;
+    setDeciding(id);
+    const ok = await onUpdateBooking(id, 'confirmed');
+    setDeciding(null);
+    showMsg(ok ? 'Заявка подтверждена ✔' : 'Не удалось подтвердить. Проверьте связь.', ok ? 'ok' : 'err');
+  };
+  const declineBooking = async () => {
+    if (!onUpdateBooking || !declineTarget) return;
+    const { id } = declineTarget;
+    setDeciding(id);
+    const ok = await onUpdateBooking(id, 'declined', declineReason.trim() || undefined);
+    setDeciding(null);
+    setDeclineTarget(null);
+    setDeclineReason('');
+    showMsg(ok ? 'Заявка отклонена, время освободилось' : 'Не удалось отклонить. Проверьте связь.', ok ? 'ok' : 'err');
+  };
+  const bookingLabel = (b: { date: string; start: string; end: string; name: string }) =>
+    `${new Date(b.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}, ${b.start}–${b.end} · ${b.name}`;
 
   const showMsg = (text: string, type: 'ok' | 'warn' | 'err') => {
     setMessage({ text, type });
@@ -417,27 +452,56 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       {/* Шкала дня (только просмотр: удаление — в списке мероприятий ниже) */}
       <Timeline events={displayEvents} selectedDate={selectedDate} hint="Заявки с сайта отмечены в списке ниже" />
 
-      {/* Новые заявки с сайта: быстрый переход к дате */}
+      {/* Заявки, ждущие подтверждения: решить можно сразу здесь */}
       {upcomingBookings.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-          <div className="flex items-center gap-2 text-sm font-bold text-amber-900 mb-2">
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4">
+          <div className="flex items-center gap-2 text-sm font-bold text-amber-900 mb-3">
             <Inbox className="w-4 h-4" />
-            Заявки с сайта: {upcomingBookings.length}
+            Ждут вашего решения: {upcomingBookings.length}
           </div>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             {upcomingBookings.slice(0, 8).map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => setSelectedDate(new Date(b.date + 'T00:00:00'))}
-                className="text-left text-sm text-amber-900 hover:bg-amber-100 rounded-lg px-2 py-1 cursor-pointer"
-              >
-                <span className="font-mono font-semibold">
-                  {new Date(b.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}{' '}
-                  {b.start}–{b.end}
-                </span>
-                <span className="text-amber-800"> · {b.name}, {b.phone}</span>
-              </button>
+              <div key={b.id} className="bg-white/80 rounded-xl border border-amber-200 p-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(new Date(b.date + 'T00:00:00'))}
+                  className="text-left text-sm text-amber-900 hover:underline cursor-pointer w-full"
+                  title="Перейти к этой дате"
+                >
+                  <span className="font-mono font-semibold">
+                    {new Date(b.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}{' '}
+                    {b.start}–{b.end}
+                  </span>
+                  <span className="text-amber-800">
+                    {' '}
+                    · {(ACTIVITY_TYPES[b.type] || ACTIVITY_TYPES.other).name} · {b.name}, {b.phone}
+                  </span>
+                  {b.note && <span className="block text-xs text-amber-700 mt-0.5 break-words">{b.note}</span>}
+                </button>
+                {onUpdateBooking && (
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      type="button"
+                      disabled={deciding === b.id}
+                      onClick={() => confirmBooking(b.id)}
+                      className="px-4 py-2 rounded-full bg-lime text-[#26340a] text-sm font-bold hover:brightness-105 disabled:opacity-60 cursor-pointer"
+                    >
+                      ✅ Подтвердить
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deciding === b.id}
+                      onClick={() => {
+                        setDeclineReason('');
+                        setDeclineTarget({ id: b.id, label: bookingLabel(b) });
+                      }}
+                      className="px-4 py-2 rounded-full bg-white border border-rose-200 text-rose-700 text-sm font-bold hover:bg-rose-50 disabled:opacity-60 cursor-pointer"
+                    >
+                      ❌ Отклонить
+                    </button>
+                  </div>
+                )}
+              </div>
             ))}
             {upcomingBookings.length > 8 && (
               <div className="text-xs text-amber-700 px-2">и ещё {upcomingBookings.length - 8}…</div>
@@ -452,21 +516,34 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           Список мероприятий на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
         </h3>
 
-        {displayEvents.length === 0 ? (
+        {listEvents.length === 0 ? (
           <div className="text-center py-8 text-slate-400 text-sm">
             На этот день пока нет мероприятий — добавьте первое через форму выше 🙂
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {[...displayEvents]
+            {[...listEvents]
               .sort((a, b) => toMinutes(a.start) - toMinutes(b.start))
               .map((evt) => {
                 const cfg = ACTIVITY_TYPES[evt.type] || ACTIVITY_TYPES.other;
+                const st = evt.bookingStatus;
+                const statusBadge =
+                  st === 'pending'
+                    ? { cls: 'bg-amber-200 text-amber-900', text: '⏳ Ждёт подтверждения' }
+                    : st === 'declined'
+                    ? { cls: 'bg-rose-100 text-rose-800', text: '✖ Отклонена' }
+                    : { cls: 'bg-emerald-100 text-emerald-800', text: '✅ Заявка подтверждена' };
                 return (
                   <div
                     key={evt.id}
                     className={`py-3 flex items-center justify-between gap-3 px-2 rounded-xl transition-colors ${
-                      evt.fromClient ? 'bg-amber-50/60 hover:bg-amber-50' : 'hover:bg-slate-50/80'
+                      evt.fromClient
+                        ? st === 'declined'
+                          ? 'bg-slate-50 opacity-60'
+                          : st === 'pending'
+                          ? 'bg-amber-50/80 hover:bg-amber-50'
+                          : 'bg-emerald-50/40 hover:bg-emerald-50/70'
+                        : 'hover:bg-slate-50/80'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-wrap">
@@ -481,8 +558,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                         {cfg.name}
                       </span>
                       {evt.fromClient && (
-                        <span className="text-[10px] font-bold uppercase tracking-wide bg-amber-200 text-amber-900 rounded-md px-1.5 py-0.5">
-                          Заявка с сайта
+                        <span className={`text-[10px] font-bold tracking-wide rounded-md px-1.5 py-0.5 ${statusBadge.cls}`}>
+                          {statusBadge.text}
                         </span>
                       )}
                       {evt.note && (
@@ -496,14 +573,44 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDelete(evt)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
-                      title={evt.fromClient ? 'Удалить заявку' : 'Удалить мероприятие'}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {evt.fromClient && evt.bookingId && onUpdateBooking && st === 'pending' && (
+                        <button
+                          type="button"
+                          disabled={deciding === evt.bookingId}
+                          onClick={() => confirmBooking(evt.bookingId!)}
+                          className="px-3 py-1.5 rounded-full bg-lime text-[#26340a] text-xs font-bold hover:brightness-105 disabled:opacity-60 cursor-pointer"
+                          title="Подтвердить заявку"
+                        >
+                          Подтвердить
+                        </button>
+                      )}
+                      {evt.fromClient && evt.bookingId && onUpdateBooking && st !== 'declined' && (
+                        <button
+                          type="button"
+                          disabled={deciding === evt.bookingId}
+                          onClick={() => {
+                            setDeclineReason('');
+                            setDeclineTarget({
+                              id: evt.bookingId!,
+                              label: `${evt.start}–${evt.end} · ${evt.note || ''}`,
+                            });
+                          }}
+                          className="px-3 py-1.5 rounded-full bg-white border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-50 disabled:opacity-60 cursor-pointer"
+                          title="Отклонить заявку: время освободится"
+                        >
+                          Отклонить
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(evt)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                        title={evt.fromClient ? 'Удалить заявку насовсем' : 'Удалить мероприятие'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -561,6 +668,55 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-sm font-semibold text-white cursor-pointer"
               >
                 Удалить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Отказ по заявке: причину можно не указывать */}
+      {declineTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => deciding === null && setDeclineTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h4 className="text-base font-bold text-slate-900 mb-1">Отклонить заявку?</h4>
+            <p className="text-sm text-slate-600 mb-3 break-words">{declineTarget.label}</p>
+            <label className="block mb-1 text-xs font-semibold text-slate-500">
+              Причина для клиента (необязательно)
+            </label>
+            <input
+              type="text"
+              value={declineReason}
+              maxLength={200}
+              autoFocus
+              onChange={(e) => setDeclineReason(e.target.value)}
+              placeholder="Например: в это время уже есть вызов"
+              className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 mb-1"
+            />
+            <p className="text-xs text-slate-400 mb-4">Время освободится, клиент увидит статус «Отклонена».</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                disabled={deciding !== null}
+                onClick={() => setDeclineTarget(null)}
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-sm font-semibold text-slate-700 cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={deciding !== null}
+                onClick={declineBooking}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-sm font-semibold text-white cursor-pointer"
+              >
+                Отклонить
               </button>
             </div>
           </div>

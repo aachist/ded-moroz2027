@@ -1,6 +1,9 @@
 /**
- * Vercel Function: удаление заявки клиента (только администратор).
- *   DELETE /api/bookings/:code/:id
+ * Vercel Function: решение администратора по заявке клиента.
+ *   PATCH  /api/bookings/:code/:id  { status: 'confirmed' | 'declined', reason? }
+ *   DELETE /api/bookings/:code/:id  — удаляет заявку насовсем
+ *
+ * Отклонённая заявка остаётся в списке (клиент увидит статус и причину), но время освобождается.
  */
 import process from 'node:process';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -38,8 +41,8 @@ async function redis(cmd: Array<string | number>): Promise<any> {
 export default async function handler(req: any, res: any) {
   res.setHeader('Cache-Control', 'no-store');
 
-  if (req.method !== 'DELETE') {
-    res.setHeader('Allow', 'DELETE');
+  if (req.method !== 'DELETE' && req.method !== 'PATCH') {
+    res.setHeader('Allow', 'DELETE, PATCH');
     return res.status(405).json({ error: 'Method not allowed' });
   }
   if (!isAdmin(req)) {
@@ -51,15 +54,42 @@ export default async function handler(req: any, res: any) {
   if (!CODE_RE.test(code) || !ID_RE.test(id)) {
     return res.status(400).json({ error: 'Неверные параметры' });
   }
+  const key = `bookings:${code}`;
 
   try {
-    await redis(['HDEL', `bookings:${code}`, id]);
-    return res.status(200).json({ success: true });
+    if (req.method === 'DELETE') {
+      await redis(['HDEL', key, id]);
+      return res.status(200).json({ success: true });
+    }
+
+    // PATCH: подтвердить или отклонить
+    const status = req.body?.status;
+    if (status !== 'confirmed' && status !== 'declined') {
+      return res.status(400).json({ error: 'Статус: confirmed или declined' });
+    }
+    const raw = await redis(['HGET', key, id]);
+    if (!raw) return res.status(404).json({ error: 'Заявка не найдена (возможно, уже удалена)' });
+    const booking = JSON.parse(raw);
+
+    booking.status = status;
+    booking.decidedAt = Date.now();
+    if (status === 'declined') {
+      const reason =
+        typeof req.body?.reason === 'string'
+          ? req.body.reason.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 200)
+          : '';
+      if (reason) booking.reason = reason;
+      else delete booking.reason;
+    } else {
+      delete booking.reason;
+    }
+    await redis(['HSET', key, id, JSON.stringify(booking)]);
+    return res.status(200).json(booking);
   } catch (e: any) {
     if (e?.message === 'NOT_CONFIGURED') {
       return res.status(503).json({ error: 'Хранилище не подключено' });
     }
-    console.error('booking delete error:', e);
+    console.error('booking item error:', e?.message);
     return res.status(500).json({ error: 'Ошибка хранилища' });
   }
 }

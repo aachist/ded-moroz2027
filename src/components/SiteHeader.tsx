@@ -10,6 +10,7 @@ interface SiteHeaderProps {
   isAdmin: boolean;
   syncStatus?: string;
   mediaCount?: number;
+  pendingCount?: number; // заявки, ждущие подтверждения (видит администратор)
   onLogout?: () => void;
 }
 
@@ -21,6 +22,7 @@ export const SiteHeader: React.FC<SiteHeaderProps> = ({
   isAdmin,
   syncStatus,
   mediaCount = 0,
+  pendingCount = 0,
   onLogout,
 }) => {
   const pill = (active: boolean) =>
@@ -81,6 +83,14 @@ export const SiteHeader: React.FC<SiteHeaderProps> = ({
           {pages.map((p) => (
             <button key={p} type="button" onClick={() => setPage(p)} className={pill(page === p)}>
               {PAGE_LABELS[p]}
+              {p === 'schedule' && isAdmin && pendingCount > 0 && (
+                <span
+                  className="ml-2 text-xs px-2 py-0.5 rounded-full font-bold bg-santa text-white"
+                  title="Заявки ждут подтверждения"
+                >
+                  {pendingCount}
+                </span>
+              )}
               {p === 'media' && mediaCount > 0 && (
                 <span
                   className={`ml-2 text-xs px-2 py-0.5 rounded-full font-bold ${

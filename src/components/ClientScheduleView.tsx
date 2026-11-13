@@ -6,6 +6,8 @@ import {
   BusyMap,
   Booking,
   fetchAvailability,
+  fetchBookingStatuses,
+  statusLabel,
   createBooking,
   loadMyBookings,
   saveMyBookings,
@@ -84,15 +86,19 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
     setLoadError(false);
     setBusy(data);
 
-    // Свои заявки, которых больше нет на сервере (например, отклонены администратором), убираем из списка
-    setMyBookings((prev) => {
-      const next = prev.filter((b) => {
-        if (b.date < from || b.date > to) return b.date >= from; // за горизонтом — оставляем
-        return (data[b.date] || []).some((s) => s.id === b.id);
+    // Статусы своих заявок (ждёт / подтверждена / отклонена); заявки, которых больше нет на сервере, убираем
+    const mineNow = loadMyBookings().filter((b) => b.date >= from);
+    const statuses = await fetchBookingStatuses(syncCode, mineNow.map((b) => b.id));
+    if (statuses) {
+      const next = mineNow.flatMap((b): Booking[] => {
+        const st = statuses[b.id];
+        if (st === undefined) return [b]; // сервер про эту заявку ничего не вернул — оставляем как есть
+        if (st === null) return []; // удалена администратором
+        return [{ ...b, status: st.status, reason: st.reason }];
       });
-      if (next.length !== prev.length) saveMyBookings(next);
-      return next.length !== prev.length ? next : prev;
-    });
+      saveMyBookings(next);
+      setMyBookings(next);
+    }
   }, [syncCode]);
 
   useEffect(() => {
@@ -108,7 +114,14 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   const timelineEvents: ScheduleEvent[] = daySlots.map((s, i) => {
     const mine = s.id ? myBookings.find((b) => b.id === s.id) : undefined;
     return mine
-      ? { id: `m${i}`, start: s.start, end: s.end, type: mine.type, note: 'Ваша заявка' }
+      ? {
+          id: `m${i}`,
+          start: s.start,
+          end: s.end,
+          type: mine.type,
+          note: `Ваша заявка · ${statusLabel(mine.status)}`,
+          bookingStatus: mine.status,
+        }
       : { id: `b${i}`, start: s.start, end: s.end, type: 'busy' };
   });
 
@@ -172,7 +185,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       setNote('');
       setMessage({
         type: 'ok',
-        text: `Заявка принята: ${selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}, ${result.booking.start}–${result.booking.end}. Мы свяжемся с вами по указанному телефону.`,
+        text: `Заявка отправлена: ${selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}, ${result.booking.start}–${result.booking.end}. Время за вами закреплено, пока мы её не подтвердим. Статус виден ниже в разделе «Ваши заявки», также мы свяжемся с вами по телефону.`,
       });
     } else {
       setMessage({ type: 'err', text: result.message });
@@ -421,10 +434,22 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
           <div className="space-y-2">
             {upcomingMine.map((b) => {
               const cfg = ACTIVITY_TYPES[b.type] || ACTIVITY_TYPES.other;
+              const st = b.status || 'pending'; // только что созданная заявка ждёт подтверждения
+              const badge =
+                st === 'confirmed'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : st === 'declined'
+                  ? 'bg-rose-100 text-rose-800'
+                  : 'bg-amber-100 text-amber-800';
               return (
-                <div key={b.id} className="flex items-start gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+                <div
+                  key={b.id}
+                  className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 ${
+                    st === 'declined' ? 'border-rose-100 bg-rose-50/60' : 'border-slate-100 bg-slate-50'
+                  }`}
+                >
                   <span className="w-1.5 self-stretch rounded-full" style={{ backgroundColor: cfg.color }} />
-                  <div className="text-sm text-slate-700 min-w-0">
+                  <div className="text-sm text-slate-700 min-w-0 flex-1">
                     <div className="font-semibold">
                       {new Date(b.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })},{' '}
                       <span className="font-mono">
@@ -432,14 +457,38 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                       </span>{' '}
                       <span className="font-normal text-slate-500">· {cfg.name}</span>
                     </div>
-                    {b.note && <div className="text-xs text-slate-500 break-words">{b.note}</div>}
+                    <span className={`inline-block mt-1 text-[11px] font-bold rounded-full px-2.5 py-0.5 ${badge}`}>
+                      {st === 'pending' ? '⏳ ' : st === 'confirmed' ? '✅ ' : '✖ '}
+                      {statusLabel(st)}
+                    </span>
+                    {st === 'declined' && (
+                      <div className="text-xs text-rose-700 mt-1 break-words">
+                        {b.reason ? `Причина: ${b.reason}. ` : ''}К сожалению, это время не подошло. Выберите другое или позвоните нам.
+                      </div>
+                    )}
+                    {b.note && <div className="text-xs text-slate-500 break-words mt-1">{b.note}</div>}
                   </div>
+                  {st === 'declined' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = myBookings.filter((x) => x.id !== b.id);
+                        setMyBookings(next);
+                        saveMyBookings(next);
+                      }}
+                      className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer px-2 py-1 shrink-0"
+                      title="Убрать из списка"
+                    >
+                      Убрать
+                    </button>
+                  )}
                 </div>
               );
             })}
           </div>
           <p className="text-xs text-slate-400 mt-3">
-            Список хранится только на этом устройстве. Чтобы изменить или отменить заявку, свяжитесь с нами.
+            Статус обновляется сам. Список хранится только на этом устройстве. Чтобы изменить или отменить заявку,
+            свяжитесь с нами.
           </p>
         </div>
       )}

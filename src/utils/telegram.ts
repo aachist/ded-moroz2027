@@ -4,6 +4,7 @@ export interface TgStatus {
   botUsername: string;
   chatId: string | null; // кому приходят уведомления
   chatFromEnv: boolean;
+  buttonsOn: boolean; // включены ли кнопки «Подтвердить / Отклонить» в Telegram (вебхук)
 }
 
 export interface TgChat {
@@ -42,6 +43,8 @@ async function post<T>(code: string, body: object): Promise<TgResult<T>> {
 }
 
 export const tgFind = (code: string) => post<{ chats: TgChat[] }>(code, { action: 'find' });
-export const tgSelect = (code: string, chatId: string) => post(code, { action: 'select', chatId });
+export const tgSelect = (code: string, chatId: string) =>
+  post<{ buttonsOn?: boolean; buttonsError?: string }>(code, { action: 'select', chatId });
+export const tgWebhook = (code: string) => post(code, { action: 'webhook' });
 export const tgTest = (code: string) => post(code, { action: 'test' });
 export const tgDisconnect = (code: string) => post(code, { action: 'disconnect' });

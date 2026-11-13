@@ -16,10 +16,18 @@ export interface BookingInput {
   website?: string; // скрытое поле-ловушка для ботов, у людей всегда пустое
 }
 
+export type BookingStatus = 'pending' | 'confirmed' | 'declined';
+
 export interface Booking extends Omit<BookingInput, 'website'> {
   id: string;
   createdAt: number;
+  status?: BookingStatus; // pending — ждёт подтверждения; нет статуса у старых заявок = подтверждена
+  reason?: string; // причина отклонения (если администратор указал)
+  decidedAt?: number;
 }
+
+export const statusLabel = (s: BookingStatus | undefined): string =>
+  s === 'pending' ? 'Ждёт подтверждения' : s === 'declined' ? 'Отклонена' : 'Подтверждена';
 
 const isJson = (res: Response) => (res.headers.get('content-type') || '').includes('application/json');
 
@@ -76,6 +84,45 @@ export async function deleteBooking(code: string, id: string): Promise<boolean> 
     return res.ok;
   } catch (e) {
     return false;
+  }
+}
+
+/** Решение администратора: подтвердить или отклонить заявку (при отклонении можно указать причину). */
+export async function updateBooking(
+  code: string,
+  id: string,
+  decision: { status: 'confirmed' | 'declined'; reason?: string }
+): Promise<Booking | null> {
+  try {
+    const res = await fetch(`/api/bookings/${code}/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(decision),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as Booking;
+  } catch (e) {
+    return null;
+  }
+}
+
+export type BookingStatusMap = Record<string, { status: BookingStatus; reason?: string } | null>;
+
+/**
+ * Статусы заявок клиента по их id (без контактных данных).
+ * Значение null — заявки больше нет (удалена администратором). Вся функция null — сервер не ответил.
+ */
+export async function fetchBookingStatuses(code: string, ids: string[]): Promise<BookingStatusMap | null> {
+  if (!ids.length) return {};
+  try {
+    const res = await fetch(`/api/bookings/${code}?ids=${ids.slice(0, 30).map(encodeURIComponent).join(',')}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok || !isJson(res)) return null;
+    const json = await res.json();
+    return json && typeof json.statuses === 'object' ? (json.statuses as BookingStatusMap) : null;
+  } catch (e) {
+    return null;
   }
 }
 

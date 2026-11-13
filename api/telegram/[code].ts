@@ -66,6 +66,31 @@ async function tg(method: string, body: any = {}, timeoutMs = 8000): Promise<{ o
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+/** Секрет вебхука выводится из токена бота (должен совпадать с api/telegram-webhook.ts). */
+const webhookSecret = (token: string) => createHmac('sha256', token).update('dm-webhook').digest('hex').slice(0, 40);
+
+/** Публичный адрес этого сайта: берётся из запроса администратора, поэтому работает и на собственном домене. */
+function publicBase(req: any): string {
+  const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '').split(',')[0].trim();
+  if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
+  return host ? `https://${host}` : '';
+}
+
+/** Включает кнопки «Подтвердить / Отклонить»: Telegram будет присылать нажатия на наш вебхук. */
+async function enableWebhook(req: any): Promise<{ ok: boolean; error?: string }> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { ok: false, error: 'Токен бота не задан на сервере' };
+  const base = publicBase(req);
+  if (!base.startsWith('https://')) return { ok: false, error: 'Не удалось определить адрес сайта (нужен https)' };
+  const r = await tg('setWebhook', {
+    url: `${base}/api/telegram-webhook`,
+    secret_token: webhookSecret(token),
+    allowed_updates: ['callback_query'],
+    drop_pending_updates: false,
+  });
+  return r.ok ? { ok: true } : { ok: false, error: r.description || 'Telegram не принял адрес' };
+}
+
 async function savedChat(code: string): Promise<{ id: string | null; fromEnv: boolean }> {
   const env = (process.env.TELEGRAM_CHAT_ID || '').trim();
   if (CHAT_RE.test(env)) return { id: env, fromEnv: true };
@@ -90,13 +115,21 @@ export default async function handler(req: any, res: any) {
       const tokenSet = !!process.env.TELEGRAM_BOT_TOKEN;
       let tokenOk = false;
       let botUsername = '';
+      let buttonsOn = false; // включены ли кнопки «Подтвердить / Отклонить»
       if (tokenSet) {
         const me = await tg('getMe', {}, 6000);
         tokenOk = !!me.ok;
         botUsername = me.ok ? String(me.result?.username || '') : '';
+        if (tokenOk) {
+          const info = await tg('getWebhookInfo', {}, 6000);
+          const base = publicBase(req);
+          buttonsOn = !!info.ok && !!base && info.result?.url === `${base}/api/telegram-webhook`;
+        }
       }
       const chat = await savedChat(code);
-      return res.status(200).json({ tokenSet, tokenOk, botUsername, chatId: chat.id, chatFromEnv: chat.fromEnv });
+      return res
+        .status(200)
+        .json({ tokenSet, tokenOk, botUsername, chatId: chat.id, chatFromEnv: chat.fromEnv, buttonsOn });
     }
 
     if (req.method !== 'POST') {
@@ -107,6 +140,8 @@ export default async function handler(req: any, res: any) {
     const action = String(req.body?.action ?? '');
 
     if (action === 'find') {
+      // Пока включены кнопки (вебхук), getUpdates не работает: временно отключаем, кнопки вернутся при подключении чата
+      await tg('deleteWebhook', { drop_pending_updates: false });
       const r = await tg('getUpdates', { limit: 100, timeout: 0, allowed_updates: ['message'] });
       if (!r.ok) return res.status(200).json({ ok: false, error: r.description || 'Не удалось получить сообщения' });
       const seen = new Map<string, any>();
@@ -130,7 +165,14 @@ export default async function handler(req: any, res: any) {
       });
       if (!r.ok) return res.status(200).json({ ok: false, error: r.description || 'Не удалось отправить сообщение' });
       await redis(['SET', `telegram-chat:${code}`, chatId]);
-      return res.status(200).json({ ok: true });
+      // Включаем кнопки «Подтвердить / Отклонить» (если не получится, уведомления всё равно работают)
+      const hook = await enableWebhook(req);
+      return res.status(200).json({ ok: true, buttonsOn: hook.ok, buttonsError: hook.ok ? undefined : hook.error });
+    }
+
+    if (action === 'webhook') {
+      const hook = await enableWebhook(req);
+      return res.status(200).json(hook.ok ? { ok: true } : { ok: false, error: hook.error });
     }
 
     if (action === 'test') {
@@ -146,6 +188,7 @@ export default async function handler(req: any, res: any) {
 
     if (action === 'disconnect') {
       await redis(['DEL', `telegram-chat:${code}`]);
+      await tg('deleteWebhook', { drop_pending_updates: false });
       return res.status(200).json({ ok: true });
     }
 

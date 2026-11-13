@@ -7,6 +7,7 @@ import {
   tgSelect,
   tgTest,
   tgDisconnect,
+  tgWebhook,
 } from '../utils/telegram';
 import { AlertTriangle, CheckCircle2, Loader2, Send } from 'lucide-react';
 
@@ -54,7 +55,23 @@ export const TelegramSetup: React.FC<{ syncCode: string }> = ({ syncCode }) => {
     setBusy(null);
     if (!r.ok) return setMsg({ type: 'err', text: r.error });
     setChats(null);
-    setMsg({ type: 'ok', text: 'Подключено! В Telegram должно прийти приветственное сообщение.' });
+    setMsg(
+      r.buttonsOn === false
+        ? {
+            type: 'err',
+            text: 'Чат подключён, уведомления будут приходить, но кнопки «Подтвердить / Отклонить» включить не удалось: ' + (r.buttonsError || 'нажмите «Включить кнопки»') + '.',
+          }
+        : { type: 'ok', text: 'Подключено! В Telegram должно прийти приветственное сообщение, а у новых заявок будут кнопки «Подтвердить / Отклонить».' }
+    );
+    load();
+  };
+
+  const enableButtons = async () => {
+    setBusy('webhook');
+    setMsg(null);
+    const r = await tgWebhook(syncCode);
+    setBusy(null);
+    setMsg(r.ok ? { type: 'ok', text: 'Кнопки «Подтвердить / Отклонить» включены.' } : { type: 'err', text: r.error });
     load();
   };
 
@@ -96,6 +113,9 @@ export const TelegramSetup: React.FC<{ syncCode: string }> = ({ syncCode }) => {
           <span>
             <b>Уведомления включены</b>
             {status.botUsername && <> (бот @{status.botUsername})</>}. О новых заявках и отзывах придёт сообщение в Telegram.
+            <span className="block mt-1">
+              Кнопки «Подтвердить / Отклонить» в Telegram: {status.buttonsOn ? <b>включены ✅</b> : <b>выключены</b>}
+            </span>
           </span>
         </div>
       ) : !status.tokenSet ? (
@@ -150,6 +170,17 @@ export const TelegramSetup: React.FC<{ syncCode: string }> = ({ syncCode }) => {
           {busy === 'find' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           Найти мой Telegram
         </button>
+        {connected && !status?.buttonsOn && (
+          <button
+            type="button"
+            onClick={enableButtons}
+            disabled={busy !== null}
+            className={`${btn} bg-lime-300 hover:bg-lime-400 text-[#26340a]`}
+          >
+            {busy === 'webhook' && <Loader2 className="w-4 h-4 animate-spin" />}
+            Включить кнопки
+          </button>
+        )}
         <button
           type="button"
           onClick={test}

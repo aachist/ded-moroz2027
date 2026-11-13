@@ -9,7 +9,7 @@ import {
   fetchMediaList,
 } from './utils/storage';
 import { getSession, logout, Session } from './utils/auth';
-import { fetchBookings, deleteBooking, Booking } from './utils/bookings';
+import { fetchBookings, deleteBooking, updateBooking, Booking } from './utils/bookings';
 import { fetchContent, saveContent, telHref, SiteContent, EMPTY_CONTENT, Contacts } from './utils/content';
 import { PageKey, PAGE_LABELS, CLIENT_PAGES, ADMIN_PAGES, useHashPage } from './nav';
 import { SiteHeader } from './components/SiteHeader';
@@ -200,6 +200,19 @@ export default function App() {
     return ok;
   };
 
+  // Решение администратора по заявке: подтвердить или отклонить (с причиной)
+  const handleUpdateBooking = async (
+    id: string,
+    status: 'confirmed' | 'declined',
+    reason?: string
+  ): Promise<boolean> => {
+    const updated = await updateBooking(syncCode, id, { status, reason });
+    if (!updated) return false;
+    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, ...updated } : b)));
+    return true;
+  };
+  const pendingCount = bookings.filter((b) => b.status === 'pending').length;
+
   // Сохранение текстов и контактов (администратор). Возвращает текст ошибки или null.
   const saveText = (field: 'variants' | 'rules') => async (text: string): Promise<string | null> => {
     const res = await saveContent(syncCode, { [field]: text });
@@ -254,6 +267,7 @@ export default function App() {
                 setSelectedDate={setSelectedDate}
                 bookings={bookings}
                 onDeleteBooking={handleDeleteBooking}
+                onUpdateBooking={handleUpdateBooking}
               />
             ) : (
               <ClientScheduleView syncCode={syncCode} />
@@ -358,7 +372,7 @@ export default function App() {
 
         <SiteFooter contacts={content.contacts} extraBottom viewSwitch={viewSwitch} />
 
-        <BottomNav page={page} setPage={setPage} menuOpen={menuOpen} onMenu={() => setMenuOpen(true)} />
+        <BottomNav page={page} setPage={setPage} menuOpen={menuOpen} onMenu={() => setMenuOpen(true)} pendingCount={isAdmin ? pendingCount : 0} />
         <MobileMenu
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
@@ -394,6 +408,7 @@ export default function App() {
         isAdmin={isAdmin}
         syncStatus={syncStatus}
         mediaCount={mediaList.length}
+        pendingCount={pendingCount}
         onLogout={authConfigured ? handleLogout : undefined}
       />
 

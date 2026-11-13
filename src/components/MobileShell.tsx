@@ -66,9 +66,10 @@ interface BottomNavProps {
   setPage: (p: PageKey) => void;
   menuOpen: boolean;
   onMenu: () => void;
+  pendingCount?: number; // заявки, ждущие подтверждения (видит администратор)
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({ page, setPage, menuOpen, onMenu }) => {
+export const BottomNav: React.FC<BottomNavProps> = ({ page, setPage, menuOpen, onMenu, pendingCount = 0 }) => {
   const inMore = ['variants', 'rules', 'contacts', 'help'].includes(page);
   const items: Array<{ key: string; label: string; icon: React.ReactNode; active: boolean; onClick: () => void }> = [
     { key: 'home', label: 'Главная', icon: <Home className="w-6 h-6" />, active: page === 'home' && !menuOpen, onClick: () => setPage('home') },
@@ -94,7 +95,14 @@ export const BottomNav: React.FC<BottomNavProps> = ({ page, setPage, menuOpen, o
               it.active ? 'text-brand' : 'text-slate-500'
             }`}
           >
-            <span className={`px-4 py-0.5 rounded-full transition-colors ${it.active ? 'bg-brand/10' : ''}`}>{it.icon}</span>
+            <span className={`relative px-4 py-0.5 rounded-full transition-colors ${it.active ? 'bg-brand/10' : ''}`}>
+              {it.icon}
+              {it.key === 'schedule' && pendingCount > 0 && (
+                <span className="absolute -top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-santa text-white text-[10px] font-extrabold flex items-center justify-center">
+                  {pendingCount}
+                </span>
+              )}
+            </span>
             <span className={`text-[11px] leading-none ${it.active ? 'font-extrabold' : 'font-semibold'}`}>{it.label}</span>
           </button>
         ))}

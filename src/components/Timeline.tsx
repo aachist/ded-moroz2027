@@ -130,13 +130,21 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, hint }
                 <div
                   key={evt.id}
                   title={`${evt.start} – ${evt.end} • ${typeCfg.name}${evt.note ? ` • ${evt.note}` : ''}`}
-                  className="group absolute rounded-lg p-2 text-white shadow-sm transition-all overflow-hidden border-l-4 border-black/20"
+                  className={`group absolute rounded-lg p-2 text-white shadow-sm transition-all overflow-hidden border-l-4 ${
+                    evt.bookingStatus === 'pending' ? 'border-dashed border-white/80 opacity-75' : 'border-black/20'
+                  }`}
                   style={{
                     backgroundColor: typeCfg.color,
                     top: `${topPercent}%`,
                     height: `max(${heightPercent}%, 24px)`,
                     width: widthCalc,
                     left: leftCalc,
+                    ...(evt.bookingStatus === 'pending'
+                      ? {
+                          backgroundImage:
+                            'repeating-linear-gradient(135deg, rgba(255,255,255,0.18) 0 8px, transparent 8px 16px)',
+                        }
+                      : {}),
                   }}
                 >
                   <div className="flex items-start justify-between gap-1 leading-tight">

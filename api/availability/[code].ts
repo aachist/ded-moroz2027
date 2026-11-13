@@ -73,6 +73,7 @@ export default async function handler(req: any, res: any) {
     for (let i = 1; i < flat.length; i += 2) {
       try {
         const b = JSON.parse(flat[i]);
+        if (b.status === 'declined') continue; // отклонённая заявка время не занимает
         add(String(b.date), b.start, b.end, String(b.id));
       } catch {}
     }

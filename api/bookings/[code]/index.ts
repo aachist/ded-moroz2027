@@ -1,7 +1,12 @@
 /**
  * Vercel Function: заявки клиентов на вызов Деда Мороза.
- *   POST /api/bookings/:code   (публично)   — клиент занимает СВОБОДНОЕ время
- *   GET  /api/bookings/:code   (администратор) — список всех заявок с контактами
+ *   POST /api/bookings/:code            (публично)      — клиент занимает СВОБОДНОЕ время; заявка ждёт подтверждения
+ *   GET  /api/bookings/:code            (администратор) — список всех заявок с контактами и статусами
+ *   GET  /api/bookings/:code?ids=a,b    (публично)      — статусы заявок по их id (без контактов): клиент видит свою
+ *
+ * Статусы: pending (ждёт подтверждения) -> confirmed (подтверждена) или declined (отклонена, время свободно).
+ * Заявки без статуса (созданные до появления подтверждений) считаются подтверждёнными.
+ * Ожидающие и подтверждённые заявки занимают время; отклонённые — нет.
  *
  * Заявки хранятся отдельно от расписания администратора (Redis hash bookings:<code>),
  * чтобы его синхронизация не затирала заявки, а заявки — его записи.
@@ -64,7 +69,7 @@ const dateRu = (d: string) =>
   new Date(`${d}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'short', timeZone: 'UTC' });
 
 /** Шлёт сообщение в Telegram, если бот подключён. Любой сбой молча игнорируется: заявку это не отменяет. */
-async function notifyTelegram(code: string, html: string): Promise<void> {
+async function notifyTelegram(code: string, html: string, replyMarkup?: any): Promise<void> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
   try {
@@ -77,7 +82,13 @@ async function notifyTelegram(code: string, html: string): Promise<void> {
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: html,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+        }),
         signal: ctrl.signal,
       });
     } finally {
@@ -85,6 +96,10 @@ async function notifyTelegram(code: string, html: string): Promise<void> {
     }
   } catch {}
 }
+
+/** Статус заявки; у заявок, созданных до подтверждений, статуса нет — они считаются подтверждёнными. */
+const statusOf = (b: any): 'pending' | 'confirmed' | 'declined' =>
+  b?.status === 'pending' || b?.status === 'declined' ? b.status : 'confirmed';
 
 function clientIp(req: any): string {
   const xf = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
@@ -115,7 +130,7 @@ async function busyForDate(code: string, date: string): Promise<Array<{ s: numbe
   for (let i = 1; i < flat.length; i += 2) {
     try {
       const b = JSON.parse(flat[i]);
-      if (b.date === date) out.push({ s: toMin(b.start), e: toMin(b.end) });
+      if (b.date === date && statusOf(b) !== 'declined') out.push({ s: toMin(b.start), e: toMin(b.end) });
     } catch {}
   }
   return out;
@@ -131,14 +146,38 @@ export default async function handler(req: any, res: any) {
   const key = `bookings:${code}`;
 
   try {
-    // ---- Администратор: список заявок со всеми контактами ----
     if (req.method === 'GET') {
+      // ---- Публично: статусы заявок по их id (клиент проверяет свои заявки). Без имён и телефонов ----
+      const idsParam = String(req.query?.ids ?? '');
+      if (idsParam) {
+        const ids = idsParam.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 30);
+        if (!ids.length || ids.some((id) => !/^[A-Za-z0-9_.-]{1,80}$/.test(id))) {
+          return res.status(400).json({ error: 'Неверные параметры' });
+        }
+        const raws: Array<string | null> = (await redis(['HMGET', key, ...ids])) || [];
+        const statuses: Record<string, { status: string; reason?: string } | null> = {};
+        ids.forEach((id, i) => {
+          const raw = raws[i];
+          if (!raw) return void (statuses[id] = null); // заявки больше нет (удалена администратором)
+          try {
+            const b = JSON.parse(raw);
+            const st = statusOf(b);
+            statuses[id] = st === 'declined' && b.reason ? { status: st, reason: String(b.reason) } : { status: st };
+          } catch {
+            statuses[id] = null;
+          }
+        });
+        return res.status(200).json({ statuses });
+      }
+
+      // ---- Администратор: список заявок со всеми контактами и статусами ----
       if (!isAdmin(req)) return res.status(401).json({ error: 'Требуется вход' });
       const flat: string[] = (await redis(['HGETALL', key])) || [];
       const bookings: any[] = [];
       for (let i = 1; i < flat.length; i += 2) {
         try {
-          bookings.push(JSON.parse(flat[i]));
+          const b = JSON.parse(flat[i]);
+          bookings.push({ ...b, status: statusOf(b) });
         } catch {}
       }
       bookings.sort((a, b) => String(a.date + a.start).localeCompare(String(b.date + b.start)));
@@ -223,6 +262,7 @@ export default async function handler(req: any, res: any) {
           name,
           phone,
           note: note || undefined,
+          status: 'pending', // ждёт подтверждения администратора
           createdAt: Date.now(),
         };
         await redis(['HSET', key, booking.id, JSON.stringify(booking)]);
@@ -232,11 +272,12 @@ export default async function handler(req: any, res: any) {
         } catch {}
       }
 
-      // Сообщение владельцу в Telegram (блокировка уже снята; сбой Telegram заявку не отменяет)
+      // Сообщение владельцу в Telegram с кнопками «Подтвердить / Отклонить»
+      // (блокировка уже снята; сбой Telegram заявку не отменяет)
       await notifyTelegram(
         code,
         [
-          '🎅 <b>Новая заявка на вызов</b>',
+          '🎅 <b>Новая заявка — ждёт подтверждения</b>',
           `📅 ${esc(dateRu(date))}, <b>${start}–${end}</b>`,
           `🎭 ${type === 'kids' ? 'Дети' : 'Взрослые'}`,
           `👤 ${esc(name)}`,
@@ -245,7 +286,15 @@ export default async function handler(req: any, res: any) {
           siteUrl() ? `\n<a href="${siteUrl()}/#schedule">Открыть расписание</a>` : '',
         ]
           .filter(Boolean)
-          .join('\n')
+          .join('\n'),
+        {
+          inline_keyboard: [
+            [
+              { text: '✅ Подтвердить', callback_data: `ok:${code}:${booking.id}` },
+              { text: '❌ Отклонить', callback_data: `no:${code}:${booking.id}` },
+            ],
+          ],
+        }
       );
       return res.status(201).json(booking);
     }
