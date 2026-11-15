@@ -1,0 +1,40 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/availability/:code",
+      "destination": "/api/bookings?view=availability&code=:code"
+    },
+    {
+      "source": "/api/bookings/:code/:id",
+      "destination": "/api/bookings?code=:code&id=:id"
+    },
+    {
+      "source": "/api/bookings/:code",
+      "destination": "/api/bookings?code=:code"
+    },
+    {
+      "source": "/api/media-list/:code/:id",
+      "destination": "/api/media-list?code=:code&id=:id"
+    },
+    {
+      "source": "/api/media-list/:code",
+      "destination": "/api/media-list?code=:code"
+    },
+    {
+      "source": "/api/reviews/:code/:id",
+      "destination": "/api/reviews?code=:code&id=:id"
+    },
+    {
+      "source": "/api/reviews/:code",
+      "destination": "/api/reviews?code=:code"
+    },
+    {
+      "source": "/api/telegram-webhook",
+      "destination": "/api/telegram?hook=1"
+    },
+    {
+      "source": "/api/telegram/:code",
+      "destination": "/api/telegram?code=:code"
+    }
+  ]
+}
