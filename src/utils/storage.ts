@@ -1,4 +1,4 @@
-import { DaySchedule, MediaItem, StorageConfig } from '../types';
+import { Album, DaySchedule, MediaItem, StorageConfig } from '../types';
 import { compressImage } from './videoThumb';
 
 /** Версия расписания с меткой времени (локальная или с сервера). */
@@ -441,6 +441,10 @@ export async function setMediaCaption(syncCode: string, item: MediaItem, caption
 let knownDeletedIds = new Set<string>();
 export const getKnownDeletedIds = (): Set<string> => knownDeletedIds;
 
+// Личные альбомы (сервер отдаёт их только администратору при заданном пароле)
+let knownAlbums: Album[] = [];
+export const getKnownAlbums = (): Album[] => knownAlbums;
+
 export async function fetchMediaList(
   syncCode: string,
   opts: { readOnly?: boolean } = {}
@@ -457,7 +461,7 @@ export async function fetchMediaList(
 
   // 2. Список файлов с собственного сервера (Vercel API)
   const serverIds = new Set<string>();
-  const serverData = await (async (): Promise<{ items: MediaItem[]; deleted: string[] } | null> => {
+  const serverData = await (async (): Promise<{ items: MediaItem[]; deleted: string[]; albums: Album[] | null } | null> => {
     try {
       const res = await fetch(`/api/media-list/${syncCode}`, { cache: 'no-store' });
       if (!res.ok) return null;
@@ -466,12 +470,14 @@ export async function fetchMediaList(
       return {
         items: Array.isArray(json.items) ? (json.items as MediaItem[]) : [],
         deleted: Array.isArray(json.deleted) ? json.deleted.map(String) : [],
+        albums: Array.isArray(json.albums) ? (json.albums as Album[]) : null,
       };
     } catch (e) {
       return null;
     }
   })();
   const serverItems = serverData ? serverData.items : null;
+  if (serverData) knownAlbums = readOnly ? [] : serverData.albums || [];
 
   const serverUrlById = new Map<string, string>();
   for (const item of serverItems || []) {
@@ -494,6 +500,11 @@ export async function fetchMediaList(
   for (const s of serverItems || []) {
     const l = byId.get(s.id);
     if (!l || l === s) continue;
+    // Альбом: источник правды — сервер (файл могли переместить на другом устройстве)
+    if ((l.album || '') !== (s.album || '')) {
+      l.album = s.album || undefined;
+      if (localIds.has(l.id)) captionSaves.add(l.id);
+    }
     if ((s.captionAt || 0) > (l.captionAt || 0)) {
       l.caption = s.caption;
       l.captionAt = s.captionAt;
@@ -576,7 +587,8 @@ export async function uploadMediaFile(
   syncCode: string,
   thumbnailDataUrl?: string,
   duration?: number,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  album?: string // id личного альбома (без него файл попадает в общую галерею)
 ): Promise<MediaItem> {
   const isVideo = file.type.startsWith('video/');
   const isPhoto = file.type.startsWith('image/');
@@ -614,6 +626,7 @@ export async function uploadMediaFile(
       url: photoDataUrl,
       thumb: photoDataUrl,
       data: photoDataUrl,
+      album: album || undefined,
       storageSource: 'local',
     };
 
@@ -644,6 +657,7 @@ export async function uploadMediaFile(
     thumb: thumbnailDataUrl || '',
     blob: file,
     duration: duration || 0,
+    album: album || undefined,
     storageSource: 'local',
   };
 
@@ -675,6 +689,7 @@ export interface ImportMediaMeta {
   captionAt?: number;
   thumb?: string;
   duration?: number;
+  album?: string; // личный альбом: при восстановлении файл не должен стать общим
 }
 
 export async function importMediaItem(
@@ -692,6 +707,7 @@ export async function importMediaItem(
     size: blob.size,
     caption: meta.caption,
     captionAt: meta.captionAt,
+    album: meta.album || undefined,
     storageSource: 'local' as const,
   };
   let item: MediaItem;
@@ -775,6 +791,7 @@ function toServerItem(item: MediaItem, cloudUrl: string) {
     thumb,
     caption: item.caption,
     captionAt: item.captionAt,
+    album: item.album,
   };
 }
 
@@ -930,4 +947,83 @@ export async function deleteMediaItem(syncCode: string, item: MediaItem): Promis
   flushPendingDeletes(syncCode).catch(() => {});
 
   return true;
+}
+
+/* ---------- Личные альбомы ---------- */
+
+/** Ссылка на личный альбом, которую администратор отправляет семье. */
+export function albumLink(token: string): string {
+  return `${window.location.origin}/#album=${token}`;
+}
+
+async function albumsRequest(syncCode: string, body: Record<string, unknown>): Promise<any> {
+  const res = await fetch(`/api/media-list/${syncCode}?view=albums`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+export async function createAlbum(syncCode: string, title: string): Promise<Album> {
+  const { album } = await albumsRequest(syncCode, { op: 'create', title });
+  knownAlbums = [...knownAlbums, album];
+  return album as Album;
+}
+
+export async function renameAlbum(syncCode: string, id: string, title: string): Promise<Album> {
+  const { album } = await albumsRequest(syncCode, { op: 'rename', id, title });
+  knownAlbums = knownAlbums.map((a) => (a.id === id ? album : a));
+  return album as Album;
+}
+
+/** Новая ссылка: старая сразу перестаёт работать. */
+export async function rotateAlbumLink(syncCode: string, id: string): Promise<Album> {
+  const { album } = await albumsRequest(syncCode, { op: 'rotate', id });
+  knownAlbums = knownAlbums.map((a) => (a.id === id ? album : a));
+  return album as Album;
+}
+
+/** Сервер удаляет только пустой альбом (иначе ответит ошибкой с пояснением). */
+export async function deleteAlbum(syncCode: string, id: string): Promise<void> {
+  await albumsRequest(syncCode, { op: 'delete', id });
+  knownAlbums = knownAlbums.filter((a) => a.id !== id);
+}
+
+/** Перемещает файл в личный альбом (albumId) или обратно в общую галерею (null). */
+export async function moveMediaToAlbum(
+  syncCode: string,
+  item: MediaItem,
+  albumId: string | null
+): Promise<void> {
+  // Файл, ещё не дошедший до облака, на сервере не найден (404): тогда альбом уйдёт вместе с выгрузкой
+  const res = await fetch(`/api/media-list/${syncCode}/${encodeURIComponent(item.id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ album: albumId }),
+  });
+  if (!res.ok && res.status !== 404) {
+    const json: any = await res.json().catch(() => ({}));
+    throw new Error(json.error || `HTTP ${res.status}`);
+  }
+  await idbSaveMedia({ ...item, album: albumId || undefined });
+}
+
+/** Открытие личного альбома по ссылке (страница семьи). Бросает ошибку, если ссылка не действует. */
+export async function fetchAlbumByToken(
+  syncCode: string,
+  token: string
+): Promise<{ title: string; items: MediaItem[] }> {
+  const res = await fetch(`/api/media-list/${syncCode}?album=${encodeURIComponent(token)}`, { cache: 'no-store' });
+  if (res.status === 404) throw new Error('NOT_FOUND');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return {
+    title: String(json.album?.title || 'Альбом'),
+    items: Array.isArray(json.items)
+      ? (json.items as MediaItem[]).sort((a, b) => (a.created || 0) - (b.created || 0))
+      : [],
+  };
 }

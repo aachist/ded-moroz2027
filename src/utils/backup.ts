@@ -154,6 +154,7 @@ export async function createBackup(
       created: item.created,
       caption: item.caption,
       captionAt: item.captionAt,
+      album: item.album,
       duration: item.duration,
       thumb: item.type === 'video' && item.thumb && item.thumb.length < 150_000 ? item.thumb : undefined,
     };

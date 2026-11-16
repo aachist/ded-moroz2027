@@ -39,7 +39,16 @@ export interface MediaItem {
   caption?: string;    // Подпись к фото/видео
   captionAt?: number;  // Когда подпись изменена (для выбора более свежей версии при синхронизации)
   duration?: number;   // Video duration in seconds
+  album?: string;      // id личного альбома; без него файл лежит в общей галерее
   storageSource?: 'local' | 'server' | 'firebase';
+}
+
+/** Личный альбом семьи: открывается по ссылке с токеном (токен видит только администратор). */
+export interface Album {
+  id: string;
+  title: string;
+  token: string;
+  createdAt: number;
 }
 
 export interface StorageConfig {
