@@ -74,7 +74,7 @@ async function tg(method: string, body: any = {}, timeoutMs = 8000): Promise<{ o
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** Секрет вебхука выводится из токена бота (должен совпадать с api/telegram-webhook.ts). */
+/** Секрет вебхука выводится из токена бота (тот же расчёт в обработчике вебхука ниже). */
 const webhookSecret = (token: string) => createHmac('sha256', token).update('dm-webhook').digest('hex').slice(0, 40);
 
 /** Публичный адрес этого сайта: берётся из запроса администратора, поэтому работает и на собственном домене. */

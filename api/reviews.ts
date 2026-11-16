@@ -65,16 +65,23 @@ async function notifyTelegram(code: string, html: string): Promise<void> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3500);
     try {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text: html, parse_mode: 'HTML', disable_web_page_preview: true }),
         signal: ctrl.signal,
       });
+      // Отзыв это не отменяет, но причину отказа Telegram оставляем в журнале Vercel (токен туда не попадает)
+      if (!r.ok) {
+        const j: any = await r.json().catch(() => ({}));
+        console.error(`telegram notify failed: HTTP ${r.status} ${String(j?.description || '').slice(0, 200)}`);
+      }
     } finally {
       clearTimeout(timer);
     }
-  } catch {}
+  } catch (e: any) {
+    console.error('telegram notify error:', e?.name === 'AbortError' ? 'timeout' : e?.message);
+  }
 }
 
 function clientIp(req: any): string {

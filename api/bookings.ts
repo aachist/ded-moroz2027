@@ -87,7 +87,7 @@ async function notifyTelegram(code: string, html: string, replyMarkup?: any): Pr
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3500);
     try {
-      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -99,10 +99,17 @@ async function notifyTelegram(code: string, html: string, replyMarkup?: any): Pr
         }),
         signal: ctrl.signal,
       });
+      // Заявку это не отменяет, но причину отказа Telegram оставляем в журнале Vercel (токен туда не попадает)
+      if (!r.ok) {
+        const j: any = await r.json().catch(() => ({}));
+        console.error(`telegram notify failed: HTTP ${r.status} ${String(j?.description || '').slice(0, 200)}`);
+      }
     } finally {
       clearTimeout(timer);
     }
-  } catch {}
+  } catch (e: any) {
+    console.error('telegram notify error:', e?.name === 'AbortError' ? 'timeout' : e?.message);
+  }
 }
 
 /** Статус заявки; у заявок, созданных до подтверждений, статуса нет — они считаются подтверждёнными. */
