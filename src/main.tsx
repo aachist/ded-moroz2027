@@ -21,3 +21,11 @@ function Root() {
 }
 
 createRoot(document.getElementById('root')!).render(<Root />);
+
+// Для установки на экран телефона нужен service worker (он ничего не кэширует, см. public/sw.js).
+// В режиме разработки не регистрируем, чтобы не мешать локальной отладке.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}

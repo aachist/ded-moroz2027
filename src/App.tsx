@@ -22,6 +22,7 @@ import { ClientScheduleView } from './components/ClientScheduleView';
 import { MediaGallery } from './components/MediaGallery';
 import { LoginForm } from './components/LoginForm';
 import { MobileHeader, BottomNav, MobileMenu } from './components/MobileShell';
+import { InstallHint } from './components/InstallHint';
 import { useDevice } from './utils/device';
 
 // Админские страницы (расписание, инструкция с копиями) — отдельные файлы: клиенты их не загружают,
@@ -366,6 +367,7 @@ export default function App() {
         <MobileHeader setPage={setPage} phoneHref={phoneHref} isAdmin={isAdmin} />
 
         <main className="flex-1 w-full px-3 pt-4">
+          <InstallHint />
           {adminBanner}
           {renderPage(page)}
         </main>
