@@ -238,7 +238,8 @@ async function handler(req: any, res: any) {
       if (!DATE_RE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return bad('Укажите дату');
       const dayDiff = (Date.parse(`${date}T00:00:00Z`) - Date.now()) / 86_400_000;
       if (dayDiff < -1 || dayDiff > MAX_DAYS_AHEAD) return bad('Выберите дату в ближайший год');
-      if (!TIME_RE.test(start) || !TIME_RE.test(end)) return bad('Укажите время начала и окончания');
+      // Конец может быть «24:00» (последний час суток, плитка 23:00–24:00)
+      if (!TIME_RE.test(start) || !(TIME_RE.test(end) || end === '24:00')) return bad('Укажите время начала и окончания');
       const s = toMin(start);
       const e = toMin(end);
       if (e - s < MIN_MINUTES) return bad('Время окончания должно быть позже начала (минимум 15 минут)');

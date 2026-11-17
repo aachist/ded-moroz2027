@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScheduleEvent } from '../types';
 import { ACTIVITY_TYPES, SELECTABLE_TYPES } from '../constants/types';
-import { Timeline } from './Timeline';
 import {
   BusyMap,
   Booking,
@@ -11,11 +9,9 @@ import {
   createBooking,
   loadMyBookings,
   saveMyBookings,
-  freeWindows,
   toMinutes,
-  fromMinutes,
 } from '../utils/bookings';
-import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, AlertTriangle, Send } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, AlertTriangle, Send, Clock } from 'lucide-react';
 
 interface Props {
   syncCode: string;
@@ -35,6 +31,32 @@ const keyOf = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 const HORIZON_DAYS = 120; // на сколько дней вперёд показываем занятость
+const MAX_HOURS = 8; // не больше стольких часов подряд в одной заявке (как на сервере)
+
+type TileState = 'loading' | 'free' | 'busy' | 'past' | 'pending' | 'confirmed';
+interface TileInfo {
+  hour: number;
+  state: TileState;
+}
+
+const TILE_LABEL: Record<TileState, string> = {
+  loading: '…',
+  free: 'свободно',
+  busy: 'занято',
+  past: 'прошло',
+  pending: 'заявка подана',
+  confirmed: 'заявка подтверждена',
+};
+
+const TILE_CLASS: Record<TileState | 'selected', string> = {
+  loading: 'bg-slate-50 border-slate-200 text-slate-300 cursor-wait',
+  free: 'bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-50 hover:border-emerald-400 cursor-pointer',
+  busy: 'bg-slate-200 border-slate-200 text-slate-400 cursor-not-allowed',
+  past: 'bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed',
+  pending: 'bg-amber-100 border-amber-400 border-dashed text-amber-900 cursor-default',
+  confirmed: 'bg-emerald-100 border-emerald-500 text-emerald-900 cursor-default',
+  selected: 'bg-blue-600 border-blue-600 text-white shadow-md cursor-pointer',
+};
 
 export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   const today = startOfDay(new Date());
@@ -46,8 +68,8 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   const [myBookings, setMyBookings] = useState<Booking[]>(() => loadMyBookings());
 
   const [type, setType] = useState<'kids' | 'adults'>('kids');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
+  // Выбранные часы: подряд идущие плитки с часа a по час b включительно
+  const [sel, setSel] = useState<{ a: number; b: number } | null>(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [note, setNote] = useState('');
@@ -108,46 +130,101 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   }, [loadBusy]);
 
   const daySlots = busy?.[selectedKey] || [];
-  const myIds = useMemo(() => new Set(myBookings.map((b) => b.id)), [myBookings]);
 
-  // Для шкалы: чужое — безымянное «Занято», своё — цветом с пометкой
-  const timelineEvents: ScheduleEvent[] = daySlots.map((s, i) => {
-    const mine = s.id ? myBookings.find((b) => b.id === s.id) : undefined;
-    return mine
-      ? {
-          id: `m${i}`,
-          start: s.start,
-          end: s.end,
-          type: mine.type,
-          note: `Ваша заявка · ${statusLabel(mine.status)}`,
-          bookingStatus: mine.status,
-        }
-      : { id: `b${i}`, start: s.start, end: s.end, type: 'busy' };
-  });
+  // Свои заявки по id: на плитках они подписаны статусом, чужие — просто «занято»
+  const myById = useMemo(() => new Map(myBookings.map((b) => [b.id, b])), [myBookings]);
+  const myOnDay = myBookings.filter((b) => b.date === selectedKey && b.status !== 'declined');
 
-  // Подсказки: свободные окна (если сегодня — только после текущего времени)
   const now = new Date();
   const isToday = selectedKey === keyOf(now);
-  const earliest = isToday ? Math.ceil((now.getHours() * 60 + now.getMinutes() + 30) / 15) * 15 : 8 * 60;
-  const free = busy
-    ? freeWindows(daySlots, Math.max(8 * 60, earliest), 22 * 60, 30)
-    : [];
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-  const pickWindow = (w: { start: string; end: string }) => {
-    setStart(w.start);
-    setEnd(fromMinutes(Math.min(toMinutes(w.end), toMinutes(w.start) + 60)));
+  // 24 плитки по часу. Приоритет состояния: своя заявка → занято другой → прошло → свободно.
+  // Час, в котором есть хоть одна чужая заявка (даже на 15 минут), занят целиком.
+  const tiles: TileInfo[] = Array.from({ length: 24 }, (_, hour) => {
+    const hs = hour * 60;
+    const he = hs + 60;
+    let mine: 'pending' | 'confirmed' | null = null;
+    let other = false;
+    for (const slot of daySlots) {
+      const ss = toMinutes(slot.start);
+      const se = slot.end === '24:00' ? 1440 : toMinutes(slot.end);
+      if (!(ss < he && hs < se)) continue;
+      const own = slot.id ? myById.get(slot.id) : undefined;
+      if (own) {
+        if (own.status === 'confirmed') mine = 'confirmed';
+        else if (mine !== 'confirmed') mine = 'pending';
+      } else {
+        other = true;
+      }
+    }
+    // Свои заявки на этот день учитываем и до очередного обновления занятости с сервера
+    for (const own of myOnDay) {
+      const ss = toMinutes(own.start);
+      const se = own.end === '24:00' ? 1440 : toMinutes(own.end);
+      if (!(ss < he && hs < se)) continue;
+      if (own.status === 'confirmed') mine = 'confirmed';
+      else if (mine !== 'confirmed') mine = 'pending';
+    }
+    if (mine) return { hour, state: mine };
+    if (!busy) return { hour, state: 'loading' }; // пока не знаем, что занято, выбирать нельзя
+    if (other) return { hour, state: 'busy' };
+    if (isToday && hs <= nowMinutes) return { hour, state: 'past' };
+    return { hour, state: 'free' };
+  });
+  const isFree = (h: number) => tiles[h]?.state === 'free';
+
+  // Если занятость обновилась и выбранный час стал недоступен — сбрасываем выбор
+  useEffect(() => {
+    if (sel) {
+      for (let h = sel.a; h <= sel.b; h++) {
+        if (!isFree(h)) {
+          setSel(null);
+          return;
+        }
+      }
+    }
+  }, [busy, myBookings]);
+
+  // Другой день — другой выбор
+  useEffect(() => {
+    setSel(null);
     setMessage(null);
+  }, [selectedKey]);
+
+  // Нажатие на свободную плитку: выбрать час; соседний час добавляется к выбору (до 8 часов подряд);
+  // нажатие на крайний выбранный час снимает его.
+  const toggleHour = (h: number) => {
+    if (!isFree(h)) return;
+    setMessage(null);
+    if (!sel) {
+      setSel({ a: h, b: h });
+    } else if (h >= sel.a && h <= sel.b) {
+      if (sel.a === sel.b) setSel(null);
+      else if (h === sel.a) setSel({ a: sel.a + 1, b: sel.b });
+      else if (h === sel.b) setSel({ a: sel.a, b: sel.b - 1 });
+      else setSel({ a: h, b: h });
+    } else if (h === sel.b + 1 || h === sel.a - 1) {
+      const next = h > sel.b ? { a: sel.a, b: h } : { a: h, b: sel.b };
+      if (next.b - next.a + 1 > MAX_HOURS) {
+        setMessage({ type: 'err', text: `Можно выбрать не больше ${MAX_HOURS} часов подряд.` });
+      } else {
+        setSel(next);
+      }
+    } else {
+      setSel({ a: h, b: h });
+    }
   };
 
+  const hh = (h: number) => `${String(h).padStart(2, '0')}:00`;
+  const start = sel ? hh(sel.a) : '';
+  const end = sel ? (sel.b + 1 >= 24 ? '24:00' : hh(sel.b + 1)) : '';
+  const selHours = sel ? sel.b - sel.a + 1 : 0;
+
   const validate = (): string | null => {
-    if (!start || !end) return 'Укажите время начала и окончания.';
-    const s = toMinutes(start);
-    const e = toMinutes(end);
-    if (e - s < 15) return 'Время окончания должно быть позже начала (минимум 15 минут).';
-    if (e - s > 8 * 60) return 'Слишком длинный интервал (максимум 8 часов).';
-    if (isToday && s <= now.getHours() * 60 + now.getMinutes()) return 'Это время уже прошло. Выберите позже.';
-    if (daySlots.some((x) => s < (x.end === '24:00' ? 1440 : toMinutes(x.end)) && toMinutes(x.start) < e)) {
-      return 'Это время занято (серые блоки на шкале). Выберите свободное.';
+    if (!sel) return 'Выберите на плитках свободный час.';
+    for (let h = sel.a; h <= sel.b; h++) {
+      if (!isFree(h)) return 'Это время занято или уже прошло. Выберите свободный час.';
     }
     if (name.trim().length < 2) return 'Укажите ваше имя.';
     if ((phone.match(/\d/g) || []).length < 6) return 'Укажите телефон, чтобы мы могли связаться.';
@@ -180,8 +257,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       const list = [...myBookings, result.booking];
       setMyBookings(list);
       saveMyBookings(list);
-      setStart('');
-      setEnd('');
+      setSel(null);
       setNote('');
       setMessage({
         type: 'ok',
@@ -220,8 +296,8 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   return (
     <div className="space-y-6">
       <div className="bg-white/80 border border-slate-200/80 rounded-2xl p-4 text-sm text-slate-600 leading-relaxed">
-        Выберите день, посмотрите свободное время на шкале и оставьте заявку. Серым отмечено занятое время, на него записаться
-        нельзя.
+        Выберите день, затем нажмите на свободный час: он подсветится. Чтобы записаться на несколько часов подряд, нажмите
+        на соседние часы. Серым отмечено занятое время, на него записаться нельзя.
       </div>
 
       {/* Выбор даты */}
@@ -306,8 +382,46 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
         </div>
       )}
 
-      {/* Шкала дня: чужое — только «Занято» */}
-      <Timeline events={timelineEvents} selectedDate={selectedDate} hint="Серое — занято" />
+      {/* 24 плитки по часу: нажмите на свободную, чтобы выбрать время */}
+      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-xs">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h3 className="font-bold text-slate-900 flex items-center gap-2">
+            <Clock className="w-4 h-4 text-slate-500" />
+            Время на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+          </h3>
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-500">
+            <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-emerald-300 bg-white" />свободно</span>
+            <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-200" />занято</span>
+            <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-dashed border-amber-400 bg-amber-100" />заявка подана</span>
+            <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-emerald-500 bg-emerald-100" />заявка подтверждена</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+          {tiles.map(({ hour, state }) => {
+            const selected = !!sel && hour >= sel.a && hour <= sel.b;
+            const label = selected ? 'выбрано' : TILE_LABEL[state];
+            const range = `${hh(hour)}–${hour === 23 ? '24:00' : hh(hour + 1)}`;
+            return (
+              <button
+                key={hour}
+                type="button"
+                disabled={state !== 'free'}
+                aria-pressed={selected}
+                aria-label={`${range}: ${label}`}
+                onClick={() => toggleHour(hour)}
+                className={`min-h-[64px] rounded-xl px-1 py-2 text-center leading-tight border transition-all ${
+                  selected ? TILE_CLASS.selected : TILE_CLASS[state]
+                }`}
+              >
+                <span className="block text-sm font-bold tabular-nums">{hh(hour)}</span>
+                <span className="block text-[10px] mt-0.5">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+        {!busy && !loadError && <p className="text-xs text-slate-400 mt-3">Загружаем занятое время…</p>}
+      </div>
 
       {/* Форма заявки */}
       <form onSubmit={submit} className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs space-y-4">
@@ -315,42 +429,24 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
           Заявка на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
         </h3>
 
-        {busy && (
-          <div>
-            <div className="text-xs font-semibold text-slate-500 mb-1.5">Свободное время (нажмите, чтобы подставить)</div>
-            {free.length === 0 ? (
-              <div className="text-sm text-slate-400">На этот день свободного времени нет. Выберите другой день.</div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {free.map((w) => (
-                  <button
-                    key={w.start + w.end}
-                    type="button"
-                    onClick={() => pickWindow(w)}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold hover:bg-emerald-100 cursor-pointer"
-                  >
-                    {w.start} – {w.end}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm ${
+            sel ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-slate-200 bg-slate-50 text-slate-500'
+          }`}
+        >
+          {sel ? (
+            <>
+              Выбрано: <b>{start}–{end}</b> ({selHours} {selHours === 1 ? 'час' : selHours < 5 ? 'часа' : 'часов'}). Чтобы
+              изменить, нажмите на другую плитку выше.
+            </>
+          ) : (
+            'Нажмите на свободный час на плитках выше.'
+          )}
+        </div>
 
         <div>
           <div className="text-xs font-semibold text-slate-500 mb-1.5">Вид праздника</div>
           <div className="flex gap-2">{SELECTABLE_TYPES.map(([k, cfg]) => typeBtn(k, cfg.name, cfg.color))}</div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-500">Начало</span>
-            <input type="time" step={900} value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold text-slate-500">Окончание</span>
-            <input type="time" step={900} value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
-          </label>
         </div>
 
         <div className="grid sm:grid-cols-2 gap-3">
