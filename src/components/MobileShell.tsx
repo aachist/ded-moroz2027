@@ -10,6 +10,7 @@ const PAGE_EMOJI: Record<PageKey, string> = {
   rules: '📜',
   reviews: '💬',
   contacts: '📞',
+  settings: '⚙️',
   help: '📖',
 };
 
@@ -70,7 +71,7 @@ interface BottomNavProps {
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({ page, setPage, menuOpen, onMenu, pendingCount = 0 }) => {
-  const inMore = ['variants', 'rules', 'contacts', 'help'].includes(page);
+  const inMore = ['variants', 'rules', 'contacts', 'settings', 'help'].includes(page);
   const items: Array<{ key: string; label: string; icon: React.ReactNode; active: boolean; onClick: () => void }> = [
     { key: 'home', label: 'Главная', icon: <Home className="w-6 h-6" />, active: page === 'home' && !menuOpen, onClick: () => setPage('home') },
     { key: 'schedule', label: 'Запись', icon: <CalendarDays className="w-6 h-6" />, active: page === 'schedule' && !menuOpen, onClick: () => setPage('schedule') },

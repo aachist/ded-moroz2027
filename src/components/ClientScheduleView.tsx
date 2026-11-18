@@ -12,6 +12,7 @@ import {
   toMinutes,
 } from '../utils/bookings';
 import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, AlertTriangle, Send, Clock } from 'lucide-react';
+import { DEFAULT_HOURS, HoursRules, describeWindow, exceptionFor, fetchHours, windowFor } from '../utils/hours';
 
 interface Props {
   syncCode: string;
@@ -33,7 +34,7 @@ const keyOf = (d: Date) =>
 const HORIZON_DAYS = 120; // на сколько дней вперёд показываем занятость
 const MAX_HOURS = 8; // не больше стольких часов подряд в одной заявке (как на сервере)
 
-type TileState = 'loading' | 'free' | 'busy' | 'past' | 'pending' | 'confirmed';
+type TileState = 'loading' | 'free' | 'busy' | 'closed' | 'past' | 'pending' | 'confirmed';
 interface TileInfo {
   hour: number;
   state: TileState;
@@ -43,6 +44,7 @@ const TILE_LABEL: Record<TileState, string> = {
   loading: '…',
   free: 'свободно',
   busy: 'занято',
+  closed: 'не работаем',
   past: 'прошло',
   pending: 'заявка подана',
   confirmed: 'заявка подтверждена',
@@ -52,6 +54,7 @@ const TILE_CLASS: Record<TileState | 'selected', string> = {
   loading: 'bg-slate-50 border-slate-200 text-slate-300 cursor-wait',
   free: 'bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-50 hover:border-emerald-400 cursor-pointer',
   busy: 'bg-slate-200 border-slate-200 text-slate-400 cursor-not-allowed',
+  closed: 'bg-slate-100 border-slate-200 border-dashed text-slate-400 cursor-not-allowed',
   past: 'bg-slate-50 border-slate-100 text-slate-300 cursor-not-allowed',
   pending: 'bg-amber-100 border-amber-400 border-dashed text-amber-900 cursor-default',
   confirmed: 'bg-emerald-100 border-emerald-500 text-emerald-900 cursor-default',
@@ -64,6 +67,9 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   const [windowStart, setWindowStart] = useState<Date>(today);
 
   const [busy, setBusy] = useState<BusyMap | null>(null);
+  // Часы работы и закрытые даты; пока не загружены (или сервер не ответил), считаем «открыто всегда»: сервер всё равно проверит
+  const [hoursRules, setHoursRules] = useState<HoursRules | null>(null);
+  const hours = hoursRules ?? DEFAULT_HOURS;
   const [loadError, setLoadError] = useState(false);
   const [myBookings, setMyBookings] = useState<Booking[]>(() => loadMyBookings());
 
@@ -101,6 +107,8 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
     const from = keyOf(startOfDay(new Date()));
     const to = keyOf(addDays(startOfDay(new Date()), HORIZON_DAYS));
     const data = await fetchAvailability(syncCode, from, to);
+    const rules = await fetchHours(syncCode);
+    if (rules) setHoursRules(rules);
     if (!data) {
       setLoadError(true);
       return;
@@ -139,6 +147,10 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   const isToday = selectedKey === keyOf(now);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
+  // Часы записи на выбранный день (null — день закрыт) и заметка владельца к исключению, если есть
+  const dayWindow = windowFor(hours, selectedKey);
+  const dayException = exceptionFor(hours, selectedKey);
+
   // 24 плитки по часу. Приоритет состояния: своя заявка → занято другой → прошло → свободно.
   // Час, в котором есть хоть одна чужая заявка (даже на 15 минут), занят целиком.
   const tiles: TileInfo[] = Array.from({ length: 24 }, (_, hour) => {
@@ -168,6 +180,8 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
     }
     if (mine) return { hour, state: mine };
     if (!busy) return { hour, state: 'loading' }; // пока не знаем, что занято, выбирать нельзя
+    // Вне часов работы (или в закрытый день) записаться нельзя; час должен целиком попадать в рабочее время
+    if (!dayWindow || hour < dayWindow.open || hour + 1 > dayWindow.close) return { hour, state: 'closed' };
     if (other) return { hour, state: 'busy' };
     if (isToday && hs <= nowMinutes) return { hour, state: 'past' };
     return { hour, state: 'free' };
@@ -184,7 +198,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
         }
       }
     }
-  }, [busy, myBookings]);
+  }, [busy, myBookings, hoursRules]);
 
   // Другой день — другой выбор
   useEffect(() => {
@@ -358,7 +372,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                     {d.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')}
                   </span>
                   <span className={`block text-[9px] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
-                    {busy ? (count ? `занято: ${count}` : 'свободно') : ' '}
+                    {!windowFor(hours, k) ? 'закрыто' : busy ? (count ? `занято: ${count}` : 'свободно') : ' '}
                   </span>
                 </button>
               );
@@ -392,10 +406,26 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
           <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-500">
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-emerald-300 bg-white" />свободно</span>
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-200" />занято</span>
+            <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-dashed border-slate-300 bg-slate-100" />не работаем</span>
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-dashed border-amber-400 bg-amber-100" />заявка подана</span>
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-emerald-500 bg-emerald-100" />заявка подтверждена</span>
           </div>
         </div>
+
+        {/* Часы работы выбранного дня: закрыто / особые часы / заметка владельца */}
+        {!dayWindow ? (
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+            <b>В этот день запись закрыта.</b> Выберите другой день.
+            {dayException?.note && <span className="block text-xs text-slate-500 mt-0.5">{dayException.note}</span>}
+          </div>
+        ) : dayWindow.open !== 0 || dayWindow.close !== 24 || dayException?.note ? (
+          <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs text-blue-900">
+            {(dayWindow.open !== 0 || dayWindow.close !== 24) && (
+              <>Запись принимается {describeWindow(dayWindow)}.</>
+            )}
+            {dayException?.note && <span className="block text-blue-800/80">{dayException.note}</span>}
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
           {tiles.map(({ hour, state }) => {

@@ -68,6 +68,34 @@ const toMin = (t: string) => {
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* ---------- Часы работы и закрытые даты (настраиваются на странице «Настройки») ---------- */
+type HoursWindow = { open: number; close: number }; // целые часы: open 0..23, close 1..24
+type HoursRules = {
+  weekly: Array<HoursWindow | null>; // индекс = день недели как в JS: 0 — воскресенье … 6 — суббота; null — не работаем
+  exceptions: Array<{ date: string; closed: boolean; open?: number; close?: number; note?: string }>;
+};
+const hh2 = (h: number) => `${String(h).padStart(2, '0')}:00`;
+
+async function readHours(code: string): Promise<HoursRules | null> {
+  try {
+    const raw = await redis(['GET', `hours:${code}`]);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    return Array.isArray(j?.weekly) && j.weekly.length === 7 ? (j as HoursRules) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Окно записи на дату: исключение важнее недельных часов. null — запись закрыта. Нет настроек — открыто 0–24, как раньше. */
+function hoursWindowFor(rules: HoursRules | null, date: string): HoursWindow | null {
+  if (!rules) return { open: 0, close: 24 };
+  const ex = (rules.exceptions || []).find((x) => x.date === date);
+  if (ex) return ex.closed ? null : { open: Number(ex.open), close: Number(ex.close) };
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  return rules.weekly[dow] || null;
+}
+
 /* ---------- Уведомления владельцу в Telegram (необязательно) ---------- */
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const siteUrl = () =>
@@ -247,6 +275,14 @@ async function handler(req: any, res: any) {
       if (!TYPES.has(type)) return bad('Выберите вид праздника');
       if (name.length < 2) return bad('Укажите имя');
       if ((phone.match(/\d/g) || []).length < 6 || !/^[0-9+()\-\s.]+$/.test(phone)) return bad('Укажите телефон');
+
+      // Часы работы и закрытые даты: проверяем на сервере, чтобы нельзя было обойти сайт
+      const rules = await readHours(code);
+      const win = hoursWindowFor(rules, date);
+      if (!win) return bad('В этот день запись закрыта. Выберите другой день.');
+      if (s < win.open * 60 || e > win.close * 60) {
+        return bad(`В этот день запись принимается с ${hh2(win.open)} до ${hh2(win.close)}.`);
+      }
 
       if (Number(await redis(['HLEN', key])) >= MAX_BOOKINGS) {
         return res.status(503).json({ error: 'full', message: 'Приём заявок временно закрыт. Позвоните нам.' });
@@ -523,7 +559,138 @@ async function handler(req: any, res: any) {
   return handler;
 })();
 
+// ============================================================ hoursHandler
+const hoursHandler = (() => {
+/**
+ * Vercel Function: часы работы по дням недели и закрытые даты.
+ *   GET  /api/hours/:code  (публично)      -> { weekly, exceptions }  (клиентам нужно, чтобы показать «не работаем»)
+ *   POST /api/hours/:code  (администратор) <- { weekly, exceptions }
+ *
+ * weekly: 7 элементов, индекс как в JS (0 — воскресенье … 6 — суббота); null = в этот день не работаем,
+ *   иначе { open, close } целыми часами (open 0..23, close 1..24, close > open).
+ * exceptions: исключения по датам — { date, closed: true } или { date, closed: false, open, close }, note — заметка (видна клиентам).
+ * Запись хранится отдельно от расписания (Redis hours:<code>). Пока ничего не настроено, открыто 0–24, как раньше.
+ */
+
+function isAdmin(req: any): boolean {
+  if (!process.env.ADMIN_PASSWORD) return true;
+  const key = process.env.AUTH_SECRET || process.env.ADMIN_PASSWORD;
+  const m = /(?:^|;\s*)dm_session=([^;]+)/.exec(String(req.headers?.cookie || ''));
+  if (!m) return false;
+  const [exp, sig] = decodeURIComponent(m[1]).split('.');
+  if (!Number(exp) || Number(exp) < Date.now() || !sig) return false;
+  const a = Buffer.from(sig);
+  const b = Buffer.from(createHmac('sha256', key).update(exp).digest('hex'));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const CODE_RE = /^[A-Za-z0-9_-]{4,40}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_EXCEPTIONS = 400;
+
+async function redis(cmd: Array<string | number>): Promise<any> {
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !token) throw new Error('NOT_CONFIGURED');
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmd),
+  });
+  const j: any = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || `Redis HTTP ${r.status}`);
+  return j.result;
+}
+
+const isInt = (v: any) => typeof v === 'number' && Number.isInteger(v);
+const validWindow = (open: any, close: any) => isInt(open) && isInt(close) && open >= 0 && open <= 23 && close >= 1 && close <= 24 && close > open;
+
+/** Приводит присланное к безопасному виду или возвращает текст ошибки. */
+function parseRules(b: any): { weekly: any[]; exceptions: any[] } | string {
+  if (!b || typeof b !== 'object') return 'Неверный формат';
+  if (!Array.isArray(b.weekly) || b.weekly.length !== 7) return 'Нужны часы на все 7 дней недели';
+  const weekly: any[] = [];
+  for (const w of b.weekly) {
+    if (w === null) {
+      weekly.push(null);
+    } else if (w && typeof w === 'object' && validWindow(w.open, w.close)) {
+      weekly.push({ open: w.open, close: w.close });
+    } else {
+      return 'Часы работы заданы неверно (с 0 до 23, до 1–24, конец позже начала)';
+    }
+  }
+  const raw = Array.isArray(b.exceptions) ? b.exceptions : [];
+  if (raw.length > MAX_EXCEPTIONS) return 'Слишком много исключений';
+  const seen = new Set<string>();
+  const exceptions: any[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== 'object' || !DATE_RE.test(String(x.date)) || Number.isNaN(Date.parse(`${x.date}T00:00:00Z`))) {
+      return 'В списке исключений неверная дата';
+    }
+    if (seen.has(x.date)) return `Дата ${x.date} указана дважды`;
+    seen.add(x.date);
+    const note = typeof x.note === 'string' ? x.note.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 80) : '';
+    if (x.closed === true) {
+      exceptions.push({ date: x.date, closed: true, ...(note ? { note } : {}) });
+    } else if (x.closed === false && validWindow(x.open, x.close)) {
+      exceptions.push({ date: x.date, closed: false, open: x.open, close: x.close, ...(note ? { note } : {}) });
+    } else {
+      return `Для даты ${x.date} неверно заданы часы`;
+    }
+  }
+  exceptions.sort((a, b2) => a.date.localeCompare(b2.date));
+  return { weekly, exceptions };
+}
+
+async function handler(req: any, res: any) {
+  res.setHeader('Cache-Control', 'no-store');
+  const code = String(req.query?.code ?? '');
+  if (!CODE_RE.test(code)) return res.status(400).json({ error: 'Неверный код синхронизации' });
+  const key = `hours:${code}`;
+
+  try {
+    if (req.method === 'GET') {
+      const raw = await redis(['GET', key]);
+      if (!raw) return res.status(200).json({ weekly: null, exceptions: [] }); // не настроено: открыто всегда
+      try {
+        const j = JSON.parse(raw);
+        return res.status(200).json({ weekly: j.weekly ?? null, exceptions: j.exceptions ?? [] });
+      } catch {
+        return res.status(200).json({ weekly: null, exceptions: [] });
+      }
+    }
+
+    if (req.method === 'POST') {
+      if (!isAdmin(req)) return res.status(401).json({ error: 'Требуется вход' });
+      let b = req.body;
+      if (typeof b === 'string') {
+        try {
+          b = JSON.parse(b);
+        } catch {
+          b = null;
+        }
+      }
+      const parsed = parseRules(b);
+      if (typeof parsed === 'string') return res.status(400).json({ error: parsed });
+      const record = { ...parsed, updatedAt: Date.now() };
+      await redis(['SET', key, JSON.stringify(record)]);
+      return res.status(200).json({ success: true, ...record });
+    }
+
+    res.setHeader('Allow', 'GET, POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  } catch (e: any) {
+    if (e?.message === 'NOT_CONFIGURED') return res.status(503).json({ error: 'Хранилище не подключено' });
+    console.error('hours error:', e);
+    return res.status(500).json({ error: 'Ошибка хранилища' });
+  }
+}
+
+  return handler;
+})();
+
 export default async function handler(req: any, res: any) {
+  if (String(req.query?.view ?? '') === 'hours') return hoursHandler(req, res);
   if (String(req.query?.view ?? '') === 'availability') return availabilityHandler(req, res);
   if (req.query?.id) return itemHandler(req, res);
   return listHandler(req, res);

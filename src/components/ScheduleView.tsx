@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { DaySchedule, ScheduleEvent } from '../types';
 import { ACTIVITY_TYPES, SELECTABLE_TYPES } from '../constants/types';
 import { Booking } from '../utils/bookings';
+import { HoursRules, describeWindow, exceptionFor, fetchHours, windowFor } from '../utils/hours';
+import { getStoredSyncCode } from '../utils/storage';
 import { Timeline } from './Timeline';
 import { Plus, Trash2, AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, PieChart, Inbox } from 'lucide-react';
 
@@ -70,6 +72,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   for (let i = 0; i < 7; i++) {
     daysList.push(addDays(shownStart, i));
   }
+
+  // Часы записи для клиентов (настраиваются на странице «Настройки»): показываем строкой над шкалой
+  const [hoursRules, setHoursRules] = useState<HoursRules | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetchHours(getStoredSyncCode()).then((r) => {
+      if (alive) setHoursRules(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // На телефоне полоса дней прокручивается: выбранный день всегда показываем по центру
   const stripRef = useRef<HTMLDivElement>(null);
@@ -450,6 +464,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       </div>
 
       {/* Шкала дня (только просмотр: удаление — в списке мероприятий ниже) */}
+      {hoursRules && (() => {
+        const w = windowFor(hoursRules, selectedKey);
+        const note = exceptionFor(hoursRules, selectedKey)?.note;
+        // Строка показывается, только если для дня что-то ограничено (иначе запись круглосуточная)
+        if (w && w.open === 0 && w.close === 24 && !note) return null;
+        return (
+          <div className={`rounded-xl border px-3 py-2 text-xs ${w ? 'border-blue-100 bg-blue-50/60 text-blue-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+            {w ? `Запись для клиентов: ${describeWindow(w)}.` : 'Запись для клиентов в этот день закрыта.'}
+            {note ? ` ${note}` : ''} Часы меняются на странице «Настройки».
+          </div>
+        );
+      })()}
       <Timeline events={displayEvents} selectedDate={selectedDate} hint="Заявки с сайта отмечены в списке ниже" />
 
       {/* Заявки, ждущие подтверждения: решить можно сразу здесь */}

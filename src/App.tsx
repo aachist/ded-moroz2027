@@ -29,7 +29,13 @@ import { useDevice } from './utils/device';
 // они подгружаются только после входа по паролю.
 const ScheduleView = lazy(() => import('./components/ScheduleView').then((m) => ({ default: m.ScheduleView })));
 const HelpView = lazy(() => import('./components/HelpView').then((m) => ({ default: m.HelpView })));
+const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 const adminFallback = <div className="py-16 text-center text-slate-400 text-sm">Загрузка…</div>;
+const AdminSettingsView = (props: React.ComponentProps<typeof SettingsView>) => (
+  <Suspense fallback={adminFallback}>
+    <SettingsView {...props} />
+  </Suspense>
+);
 const AdminScheduleView = (props: React.ComponentProps<typeof ScheduleView>) => (
   <Suspense fallback={adminFallback}>
     <ScheduleView {...props} />
@@ -323,6 +329,13 @@ export default function App() {
         return (
           <PageShell title={PAGE_LABELS.contacts} onBack={() => setPage('home')}>
             <ContactsPage contacts={content.contacts} isAdmin={isAdmin} onSave={saveContacts} />
+          </PageShell>
+        );
+
+      case 'settings':
+        return (
+          <PageShell title={PAGE_LABELS.settings} onBack={() => setPage('home')}>
+            <AdminSettingsView syncCode={syncCode} />
           </PageShell>
         );
 

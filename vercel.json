@@ -35,6 +35,10 @@
     {
       "source": "/api/telegram/:code",
       "destination": "/api/telegram?code=:code"
+    },
+    {
+      "source": "/api/hours/:code",
+      "destination": "/api/bookings?code=:code&view=hours"
     }
   ],
   "headers": [

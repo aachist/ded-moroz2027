@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-export type PageKey = 'home' | 'schedule' | 'media' | 'variants' | 'rules' | 'reviews' | 'contacts' | 'help';
+export type PageKey = 'home' | 'schedule' | 'media' | 'variants' | 'rules' | 'reviews' | 'contacts' | 'settings' | 'help';
 
 export const PAGE_LABELS: Record<PageKey, string> = {
   home: 'Главная',
@@ -10,13 +10,14 @@ export const PAGE_LABELS: Record<PageKey, string> = {
   rules: 'Правила встреч с Дедом Морозом',
   reviews: 'Отзывы',
   contacts: 'Контакты Деда Мороза',
+  settings: 'Настройки',
   help: 'Инструкция',
 };
 
 /** Страницы, видимые клиентам (по порядку в меню). */
 export const CLIENT_PAGES: PageKey[] = ['schedule', 'media', 'variants', 'rules', 'reviews', 'contacts'];
-/** Страницы администратора: те же + инструкция и резервные копии. */
-export const ADMIN_PAGES: PageKey[] = [...CLIENT_PAGES, 'help'];
+/** Страницы администратора: те же + настройки, инструкция и резервные копии. */
+export const ADMIN_PAGES: PageKey[] = [...CLIENT_PAGES, 'settings', 'help'];
 
 const ALL: PageKey[] = ['home', ...ADMIN_PAGES];
 
