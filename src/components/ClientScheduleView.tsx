@@ -7,12 +7,15 @@ import {
   fetchBookingStatuses,
   statusLabel,
   createBooking,
+  lookupBooking,
   loadMyBookings,
   saveMyBookings,
   toMinutes,
 } from '../utils/bookings';
 import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, AlertTriangle, Send, Clock } from 'lucide-react';
 import { DEFAULT_HOURS, HoursRules, describeWindow, exceptionFor, fetchHours, windowFor } from '../utils/hours';
+import { PhoneField } from './PhoneField';
+import { fullPhone, isPhoneComplete } from '../utils/phone';
 
 interface Props {
   syncCode: string;
@@ -77,7 +80,12 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   // Выбранные часы: подряд идущие плитки с часа a по час b включительно
   const [sel, setSel] = useState<{ a: number; b: number } | null>(null);
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(''); // только 10 национальных цифр, код +7 подставляется сам
+  // Поиск заявки по телефону и номеру
+  const [lookupPhone, setLookupPhone] = useState('');
+  const [lookupNum, setLookupNum] = useState('');
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupMsg, setLookupMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [note, setNote] = useState('');
   const [website, setWebsite] = useState(''); // ловушка для ботов
   const [submitting, setSubmitting] = useState(false);
@@ -241,7 +249,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       if (!isFree(h)) return 'Это время занято или уже прошло. Выберите свободный час.';
     }
     if (name.trim().length < 2) return 'Укажите ваше имя.';
-    if ((phone.match(/\d/g) || []).length < 6) return 'Укажите телефон, чтобы мы могли связаться.';
+    if (!isPhoneComplete(phone)) return 'Введите телефон: код +7 подставлен, нужно ещё 10 цифр (например, 900 111-22-33).';
     return null;
   };
 
@@ -261,7 +269,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       end,
       type,
       name: name.trim(),
-      phone: phone.trim(),
+      phone: fullPhone(phone),
       note: note.trim() || undefined,
       website,
     });
@@ -273,14 +281,53 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       saveMyBookings(list);
       setSel(null);
       setNote('');
+      const dateText = selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
       setMessage({
         type: 'ok',
-        text: `Заявка отправлена: ${selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}, ${result.booking.start}–${result.booking.end}. Время за вами закреплено, пока мы её не подтвердим. Статус виден ниже в разделе «Ваши заявки», также мы свяжемся с вами по телефону.`,
+        text: result.booking.num
+          ? `Заявка № ${result.booking.num} отправлена: ${dateText}, ${result.booking.start}–${result.booking.end}. Запомните или запишите номер ${result.booking.num}: по номеру телефона и этому номеру заявку можно найти на любом устройстве. Время за вами закреплено, пока мы её не подтвердим. Статус виден ниже в разделе «Ваши заявки», также мы свяжемся с вами по телефону.`
+          : `Заявка отправлена: ${dateText}, ${result.booking.start}–${result.booking.end}. Время за вами закреплено, пока мы её не подтвердим. Статус виден ниже в разделе «Ваши заявки», также мы свяжемся с вами по телефону.`,
       });
     } else {
       setMessage({ type: 'err', text: result.message });
     }
     loadBusy(); // обновляем занятость (в том числе при конфликте)
+  };
+
+  // Поиск заявки по телефону и номеру (на любом устройстве); найденная заявка добавляется в «Ваши заявки» этого устройства
+  const findBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (lookupBusy) return;
+    if (!isPhoneComplete(lookupPhone)) {
+      setLookupMsg({ type: 'err', text: 'Введите телефон: код +7 подставлен, нужно ещё 10 цифр.' });
+      return;
+    }
+    if (!/^\d{5}$/.test(lookupNum)) {
+      setLookupMsg({ type: 'err', text: 'Номер заявки состоит из 5 цифр.' });
+      return;
+    }
+    setLookupBusy(true);
+    setLookupMsg(null);
+    const res = await lookupBooking(syncCode, fullPhone(lookupPhone), lookupNum);
+    setLookupBusy(false);
+    if (!res.ok) {
+      setLookupMsg({ type: 'err', text: res.message });
+      return;
+    }
+    const found = res.booking;
+    const next = [...myBookings.filter((x) => x.id !== found.id), found];
+    setMyBookings(next);
+    saveMyBookings(next);
+    const when = new Date(found.date + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    const st = found.status || 'confirmed';
+    setLookupMsg({
+      type: 'ok',
+      text: `Заявка № ${found.num || lookupNum} найдена: ${when}, ${found.start}–${found.end}. Статус: ${statusLabel(st).toLowerCase()}.${
+        st === 'declined' && found.reason ? ` Причина: ${found.reason}.` : ''
+      } Она добавлена в «Ваши заявки» на этом устройстве.`,
+    });
+    setLookupNum('');
+    loadBusy(); // свои часы на плитках
   };
 
   const typeBtn = (key: string, label: string, color: string) => {
@@ -493,16 +540,8 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
             />
           </label>
           <label className="block">
-            <span className="text-xs font-semibold text-slate-500">Телефон</span>
-            <input
-              type="tel"
-              value={phone}
-              maxLength={30}
-              autoComplete="tel"
-              onChange={(e) => setPhone(e.target.value)}
-              className={inputCls}
-              placeholder="+7 900 000-00-00"
-            />
+            <span className="text-xs font-semibold text-slate-500">Телефон (код +7 подставлен)</span>
+            <PhoneField value={phone} onChange={setPhone} className="mt-1" name="phone" />
           </label>
         </div>
 
@@ -582,6 +621,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                         {b.start}–{b.end}
                       </span>{' '}
                       <span className="font-normal text-slate-500">· {cfg.name}</span>
+                      {b.num && <span className="font-normal text-slate-500"> · № {b.num}</span>}
                     </div>
                     <span className={`inline-block mt-1 text-[11px] font-bold rounded-full px-2.5 py-0.5 ${badge}`}>
                       {st === 'pending' ? '⏳ ' : st === 'confirmed' ? '✅ ' : '✖ '}
@@ -613,11 +653,60 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
             })}
           </div>
           <p className="text-xs text-slate-400 mt-3">
-            Статус обновляется сам. Список хранится только на этом устройстве. Чтобы изменить или отменить заявку,
-            свяжитесь с нами.
+            Статус обновляется сам. Если вы сменили телефон или открыли сайт на другом устройстве, найдите заявку по
+            номеру телефона и номеру заявки ниже. Чтобы изменить или отменить заявку, свяжитесь с нами.
           </p>
         </div>
       )}
+
+      {/* Поиск заявки на любом устройстве: телефон + номер из 5 цифр */}
+      <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
+        <h3 className="font-bold text-slate-900">Найти свою заявку</h3>
+        <p className="text-sm text-slate-600 mt-1 mb-3">
+          Введите телефон, который вы указывали, и номер заявки из 5 цифр. Номер вы получили после отправки заявки.
+        </p>
+        <form onSubmit={findBooking} className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-500">Телефон (код +7 подставлен)</span>
+              <PhoneField value={lookupPhone} onChange={setLookupPhone} className="mt-1" name="lookup-phone" ariaLabel="Телефон из заявки" />
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-slate-500">Номер заявки (5 цифр)</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={5}
+                value={lookupNum}
+                onChange={(e) => setLookupNum(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                className={inputCls + ' mt-1'}
+                placeholder="12345"
+                aria-label="Номер заявки, 5 цифр"
+              />
+            </label>
+          </div>
+          <button
+            type="submit"
+            disabled={lookupBusy}
+            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-sm font-semibold cursor-pointer"
+          >
+            {lookupBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+            Найти заявку
+          </button>
+        </form>
+
+        {lookupMsg && (
+          <div
+            className={`mt-3 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${
+              lookupMsg.type === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+            }`}
+          >
+            {lookupMsg.type === 'ok' ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
+            <span className="break-words">{lookupMsg.text}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

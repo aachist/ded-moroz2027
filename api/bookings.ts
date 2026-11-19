@@ -4,7 +4,7 @@
  * Маршрутизация по адресам — в vercel.json (rewrites); здесь выбор обработчика по параметрам запроса.
  */
 import process from 'node:process';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 
 // ============================================================ listHandler
 const listHandler = (() => {
@@ -67,6 +67,25 @@ const toMin = (t: string) => {
   return h * 60 + m;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/* ---------- Телефон и короткий номер заявки ---------- */
+/**
+ * Телефон с кодом +7: принимаем 8…, 7…, +7… и любые пробелы, скобки, дефисы; нужно ровно 10 цифр после +7
+ * (первая цифра 2–9: номеров на 0 и 1 не бывает). Возвращает 10 цифр или null.
+ */
+function phoneDigits10(raw: string): string | null {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 11 && (d[0] === '7' || d[0] === '8')) d = d.slice(1);
+  return /^[2-9]\d{9}$/.test(d) ? d : null;
+}
+const fmtPhone = (d: string) => `+7 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 8)}-${d.slice(8, 10)}`;
+/** Последние 10 цифр: так сравниваются и старые заявки, у которых телефон записан в произвольном виде. */
+const last10 = (raw: string) => String(raw || '').replace(/\D/g, '').slice(-10);
+
+const LOOKUP_IP_LIMIT = 15; // поисков заявки с одного IP за окно
+const LOOKUP_IP_WINDOW = 600; // секунд
+const LOOKUP_FAIL_LIMIT = 8; // неудачных попыток на один телефон за окно
+const LOOKUP_FAIL_WINDOW = 3600; // секунд
 
 /* ---------- Часы работы и закрытые даты (настраиваются на странице «Настройки») ---------- */
 type HoursWindow = { open: number; close: number }; // целые часы: open 0..23, close 1..24
@@ -187,6 +206,7 @@ async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'Неверные параметры' });
   }
   const key = `bookings:${code}`;
+  const numKey = `booknum:${code}`; // короткий 5-значный номер -> id заявки
 
   try {
     if (req.method === 'GET') {
@@ -239,6 +259,60 @@ async function handler(req: any, res: any) {
       }
       if (!b || typeof b !== 'object') return res.status(400).json({ error: 'invalid', message: 'Неверный запрос' });
 
+      // ---- Поиск своей заявки на любом устройстве: телефон + 5-значный номер (POST, чтобы телефон не попал в адрес) ----
+      if (String(req.query?.lookup ?? '') === '1') {
+        const num = String(b.num ?? '').trim();
+        const p10 = phoneDigits10(String(b.phone ?? ''));
+        if (!/^\d{5}$/.test(num) || !p10) {
+          return res.status(400).json({ error: 'invalid', message: 'Введите телефон (+7 и 10 цифр) и номер заявки из 5 цифр.' });
+        }
+        // Номер короткий, поэтому перебор ограничиваем: по IP и по телефону
+        const tooMany = () =>
+          res.status(429).json({ error: 'rate', message: 'Слишком много попыток. Попробуйте через час или позвоните нам.' });
+        try {
+          const ipKey = `lookup-rate:${clientIp(req)}`;
+          const n = Number(await redis(['INCR', ipKey]));
+          if (n === 1) await redis(['EXPIRE', ipKey, LOOKUP_IP_WINDOW]);
+          if (n > LOOKUP_IP_LIMIT) return tooMany();
+          const fails = Number(await redis(['GET', `lookup-fail:${code}:${p10}`])) || 0;
+          if (fails >= LOOKUP_FAIL_LIMIT) return tooMany();
+        } catch {}
+
+        let found: any = null;
+        const id = await redis(['HGET', numKey, num]);
+        if (id) {
+          const raw = await redis(['HGET', key, String(id)]);
+          try {
+            const bk = raw ? JSON.parse(raw) : null;
+            if (bk && last10(String(bk.phone)) === p10) found = bk;
+          } catch {}
+        }
+        if (!found) {
+          try {
+            const failKey = `lookup-fail:${code}:${p10}`;
+            const n = Number(await redis(['INCR', failKey]));
+            if (n === 1) await redis(['EXPIRE', failKey, LOOKUP_FAIL_WINDOW]);
+          } catch {}
+          return res.status(404).json({ error: 'not_found', message: 'Заявка не найдена. Проверьте телефон и номер.' });
+        }
+        const st = statusOf(found);
+        return res.status(200).json({
+          booking: {
+            id: found.id,
+            num: found.num,
+            date: found.date,
+            start: found.start,
+            end: found.end,
+            type: found.type,
+            name: found.name,
+            phone: found.phone,
+            status: st,
+            ...(st === 'declined' && found.reason ? { reason: String(found.reason) } : {}),
+            createdAt: found.createdAt,
+          },
+        });
+      }
+
       // Ловушка для ботов: скрытое поле, которое человек не заполняет
       if (typeof b.website === 'string' && b.website.trim()) {
         return res.status(201).json({ id: 'ok', ignored: true });
@@ -259,7 +333,7 @@ async function handler(req: any, res: any) {
       const end = String(b.end ?? '');
       const type = String(b.type ?? '');
       const name = cleanText(b.name, 80);
-      const phone = cleanText(b.phone, 30);
+      const phoneRaw = cleanText(b.phone, 30);
       const note = cleanText(b.note, 500);
 
       const bad = (message: string) => res.status(400).json({ error: 'invalid', message });
@@ -274,7 +348,10 @@ async function handler(req: any, res: any) {
       if (e - s > MAX_MINUTES) return bad('Слишком длинный интервал (максимум 8 часов)');
       if (!TYPES.has(type)) return bad('Выберите вид праздника');
       if (name.length < 2) return bad('Укажите имя');
-      if ((phone.match(/\d/g) || []).length < 6 || !/^[0-9+()\-\s.]+$/.test(phone)) return bad('Укажите телефон');
+      // Телефон: код +7 и ровно 10 цифр; в заявке хранится в едином виде «+7 (900) 111-22-33»
+      const phone10 = phoneDigits10(phoneRaw);
+      if (!phone10) return bad('Укажите телефон: код +7 и 10 цифр, например +7 (900) 111-22-33');
+      const phone = fmtPhone(phone10);
 
       // Часы работы и закрытые даты: проверяем на сервере, чтобы нельзя было обойти сайт
       const rules = await readHours(code);
@@ -317,6 +394,16 @@ async function handler(req: any, res: any) {
           status: 'pending', // ждёт подтверждения администратора
           createdAt: Date.now(),
         };
+        // Короткий номер из 5 цифр: HSETNX гарантирует, что он не повторится даже при одновременных заявках на разные даты
+        let num = '';
+        for (let i = 0; i < 30 && !num; i++) {
+          const cand = String(randomInt(10000, 100000));
+          if (Number(await redis(['HSETNX', numKey, cand, booking.id])) === 1) num = cand;
+        }
+        if (!num) {
+          return res.status(503).json({ error: 'busy_lock', message: 'Не удалось выдать номер заявки. Повторите через секунду.' });
+        }
+        booking.num = num;
         await redis(['HSET', key, booking.id, JSON.stringify(booking)]);
       } finally {
         try {
@@ -330,6 +417,7 @@ async function handler(req: any, res: any) {
         code,
         [
           '🎅 <b>Новая заявка — ждёт подтверждения</b>',
+          `🔢 Заявка № <b>${booking.num}</b>`,
           `📅 ${esc(dateRu(date))}, <b>${start}–${end}</b>`,
           `🎭 ${type === 'kids' ? 'Дети' : 'Взрослые'}`,
           `👤 ${esc(name)}`,
@@ -425,6 +513,12 @@ async function handler(req: any, res: any) {
 
   try {
     if (req.method === 'DELETE') {
+      // Освобождаем и короткий номер заявки, чтобы старый номер перестал находить удалённую заявку
+      try {
+        const raw = await redis(['HGET', key, id]);
+        const num = raw ? String(JSON.parse(raw)?.num ?? '') : '';
+        if (/^\d{5}$/.test(num)) await redis(['HDEL', `booknum:${code}`, num]);
+      } catch {}
       await redis(['HDEL', key, id]);
       return res.status(200).json({ success: true });
     }

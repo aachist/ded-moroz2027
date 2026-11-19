@@ -20,6 +20,7 @@ export type BookingStatus = 'pending' | 'confirmed' | 'declined';
 
 export interface Booking extends Omit<BookingInput, 'website'> {
   id: string;
+  num?: string; // короткий номер заявки из 5 цифр (у старых заявок его нет)
   createdAt: number;
   status?: BookingStatus; // pending — ждёт подтверждения; нет статуса у старых заявок = подтверждена
   reason?: string; // причина отклонения (если администратор указал)
@@ -63,6 +64,27 @@ export async function createBooking(code: string, input: BookingInput): Promise<
     return { ok: false, reason: 'error', message: message || 'Не удалось отправить заявку. Попробуйте ещё раз.' };
   } catch (e) {
     return { ok: false, reason: 'error', message: 'Нет связи с сервером. Проверьте интернет и повторите.' };
+  }
+}
+
+/**
+ * Поиск своей заявки на любом устройстве по телефону и 5-значному номеру.
+ * Телефон отправляется в теле запроса (не в адресе), чтобы не попасть в журналы.
+ */
+export type LookupResult = { ok: true; booking: Booking } | { ok: false; message: string };
+
+export async function lookupBooking(code: string, phone: string, num: string): Promise<LookupResult> {
+  try {
+    const res = await fetch(`/api/bookings/${code}?lookup=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, num }),
+    });
+    const json = isJson(res) ? await res.json().catch(() => ({})) : {};
+    if (res.ok && json.booking) return { ok: true, booking: json.booking as Booking };
+    return { ok: false, message: typeof json.message === 'string' ? json.message : 'Не удалось найти заявку. Попробуйте ещё раз.' };
+  } catch (e) {
+    return { ok: false, message: 'Нет связи с сервером. Проверьте интернет и повторите.' };
   }
 }
 

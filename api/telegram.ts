@@ -284,6 +284,7 @@ const statusOf = (b: any): 'pending' | 'confirmed' | 'declined' =>
 function resultText(b: any, status: 'confirmed' | 'declined'): string {
   return [
     status === 'confirmed' ? '✅ <b>Заявка подтверждена</b>' : '❌ <b>Заявка отклонена</b>',
+    b.num ? `🔢 Заявка № <b>${esc(String(b.num))}</b>` : '',
     `📅 ${esc(dateRu(String(b.date)))}, <b>${esc(String(b.start))}–${esc(String(b.end))}</b>`,
     `🎭 ${b.type === 'adults' ? 'Взрослые' : 'Дети'}`,
     `👤 ${esc(String(b.name || ''))}`,

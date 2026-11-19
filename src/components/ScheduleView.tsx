@@ -108,7 +108,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       start: b.start,
       end: b.end,
       type: b.type,
-      note: [b.name, b.phone, b.note].filter(Boolean).join(' · '),
+      note: [b.num ? `№ ${b.num}` : '', b.name, b.phone, b.note].filter(Boolean).join(' · '),
       fromClient: true,
       bookingId: b.id,
       bookingStatus: b.status || 'confirmed', // у старых заявок статуса нет: они считаются подтверждёнными
@@ -500,7 +500,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   </span>
                   <span className="text-amber-800">
                     {' '}
-                    · {(ACTIVITY_TYPES[b.type] || ACTIVITY_TYPES.other).name} · {b.name}, {b.phone}
+                    · {(ACTIVITY_TYPES[b.type] || ACTIVITY_TYPES.other).name} · {b.name}, {b.phone}{b.num ? ` · № ${b.num}` : ''}
                   </span>
                   {b.note && <span className="block text-xs text-amber-700 mt-0.5 break-words">{b.note}</span>}
                 </button>
