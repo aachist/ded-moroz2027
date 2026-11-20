@@ -1,6 +1,7 @@
 import React from 'react';
 import { PageKey, PAGE_LABELS } from '../nav';
 import { NewYearCountdown } from './NewYearCountdown';
+import { HomeReviews } from './HomeReviews';
 import { Phone } from 'lucide-react';
 
 interface HomePageProps {
@@ -93,6 +94,9 @@ export const HomePage: React.FC<HomePageProps> = ({ setPage, phoneHref, isAdmin 
 
     {/* Отсчёт до Нового года */}
     <NewYearCountdown />
+
+    {/* Средняя оценка и два свежих отзыва (блока нет, пока нет одобренных отзывов) */}
+    <HomeReviews setPage={setPage} />
 
     {/* Разделы */}
     <section>

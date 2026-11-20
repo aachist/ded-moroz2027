@@ -299,16 +299,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
                 }`}
               >
-                <span className="block text-[11px] uppercase font-semibold opacity-75">
+                <span className="block text-[0.6875rem] uppercase font-semibold opacity-75">
                   {d.toLocaleDateString('ru-RU', { weekday: 'short' })}
                 </span>
                 <span className="block text-xl font-bold leading-tight">{d.getDate()}</span>
-                <span className="block text-[10px] opacity-70">
+                <span className="block text-[0.625rem] opacity-70">
                   {d.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')}
                 </span>
                 {isToday && (
                   <span
-                    className={`block text-[9px] font-bold ${
+                    className={`block text-[0.5625rem] font-bold ${
                       isSelected ? 'text-blue-100' : 'text-blue-600'
                     }`}
                   >
@@ -584,7 +584,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                         {cfg.name}
                       </span>
                       {evt.fromClient && (
-                        <span className={`text-[10px] font-bold tracking-wide rounded-md px-1.5 py-0.5 ${statusBadge.cls}`}>
+                        <span className={`text-[0.625rem] font-bold tracking-wide rounded-md px-1.5 py-0.5 ${statusBadge.cls}`}>
                           {statusBadge.text}
                         </span>
                       )}

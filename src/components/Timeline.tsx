@@ -86,7 +86,7 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, hint }
             {Array.from({ length: 25 }).map((_, i) => (
               <div
                 key={i}
-                className="absolute right-2 text-[11px] font-mono text-slate-400 font-medium -translate-y-1/2"
+                className="absolute right-2 text-[0.6875rem] font-mono text-slate-400 font-medium -translate-y-1/2"
                 style={{ top: `${i * 48}px` }}
               >
                 {String(i).padStart(2, '0')}:00
@@ -110,7 +110,7 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, hint }
               >
                 <div className="w-2.5 h-2.5 rounded-full bg-rose-500 -ml-1.5 shadow-sm" />
                 <div className="flex-1 border-t-2 border-rose-500 border-dashed" />
-                <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full mr-2 shadow-xs">
+                <span className="bg-rose-500 text-white text-[0.625rem] font-bold px-1.5 py-0.5 rounded-full mr-2 shadow-xs">
                   {String(now.getHours()).padStart(2, '0')}:
                   {String(now.getMinutes()).padStart(2, '0')}
                 </span>
@@ -148,19 +148,19 @@ export const Timeline: React.FC<TimelineProps> = ({ events, selectedDate, hint }
                   }}
                 >
                   <div className="flex items-start justify-between gap-1 leading-tight">
-                    <div className="font-bold text-[11px] sm:text-xs truncate">
+                    <div className="font-bold text-[0.6875rem] sm:text-xs truncate">
                       {evt.start} – {evt.end}
                     </div>
                   </div>
 
                   {!isShort && (
-                    <div className="text-[11px] font-medium opacity-95 truncate mt-0.5">
+                    <div className="text-[0.6875rem] font-medium opacity-95 truncate mt-0.5">
                       {typeCfg.name}
                     </div>
                   )}
 
                   {!isShort && evt.note && (
-                    <div className="text-[10px] opacity-80 truncate mt-0.5">
+                    <div className="text-[0.625rem] opacity-80 truncate mt-0.5">
                       {evt.note}
                     </div>
                   )}

@@ -121,3 +121,41 @@ export async function compressImage(file: File, maxDim: number = 1600, quality: 
     img.src = url;
   });
 }
+
+/**
+ * Маленькое превью фото для сетки галереи (по умолчанию до 480 пикселей, JPEG, обычно 20–60 КБ).
+ * Принимает файл или Blob (в том числе скачанный из облака).
+ */
+export async function makeThumbBlob(source: Blob, maxDim: number = 480, quality: number = 0.72): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(source);
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const ctx = c.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error('Не удалось создать превью'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          if (blob) resolve(blob);
+          else reject(new Error('Не удалось создать превью'));
+        },
+        'image/jpeg',
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Не удалось прочитать изображение'));
+    };
+    img.src = url;
+  });
+}

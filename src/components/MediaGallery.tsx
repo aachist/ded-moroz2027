@@ -230,7 +230,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
         } else {
           // Compress photo for quick thumbnail
           try {
-            thumbnail = await compressImage(file, 800, 0.8);
+            thumbnail = await compressImage(file, 480, 0.72);
           } catch (e) {
             console.warn(e);
           }
@@ -643,6 +643,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
                       alt={m.caption || ""}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       loading="lazy"
+                      decoding="async"
                     />
                   ) : (
                     <div className="w-full h-full relative bg-slate-900">
@@ -673,7 +674,7 @@ export const MediaGallery: React.FC<MediaGalleryProps> = ({
 
                   {/* Метка только у видео (у фото никаких надписей) */}
                   {m.type === 'video' && (
-                    <span className="absolute top-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
+                    <span className="absolute top-2 left-2 bg-black/60 backdrop-blur-xs text-white text-[0.625rem] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 shadow-xs">
                       <Film className="w-2.5 h-2.5" />
                       <span>Видео</span>
                     </span>

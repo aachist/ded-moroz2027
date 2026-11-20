@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { PageKey, PAGE_LABELS } from '../nav';
+import { FontScaleButton } from './FontScaleButton';
 import { CalendarDays, ChevronRight, Clapperboard, Home, LogOut, Menu, MessageCircle, Monitor, Phone, X } from 'lucide-react';
 
 const PAGE_EMOJI: Record<PageKey, string> = {
@@ -34,10 +35,11 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({ setPage, phoneHref, 
 
       <div className="flex items-center gap-2 shrink-0">
         {isAdmin && (
-          <span className="text-[10px] font-extrabold uppercase tracking-wide bg-lime text-[#26340a] rounded-full px-2 py-1">
+          <span className="text-[0.625rem] font-extrabold uppercase tracking-wide bg-lime text-[#26340a] rounded-full px-2 py-1">
             Админ
           </span>
         )}
+        <FontScaleButton />
         {phoneHref ? (
           <a
             href={phoneHref}
@@ -99,12 +101,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({ page, setPage, menuOpen, o
             <span className={`relative px-4 py-0.5 rounded-full transition-colors ${it.active ? 'bg-brand/10' : ''}`}>
               {it.icon}
               {it.key === 'schedule' && pendingCount > 0 && (
-                <span className="absolute -top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-santa text-white text-[10px] font-extrabold flex items-center justify-center">
+                <span className="absolute -top-1 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-santa text-white text-[0.625rem] font-extrabold flex items-center justify-center">
                   {pendingCount}
                 </span>
               )}
             </span>
-            <span className={`text-[11px] leading-none ${it.active ? 'font-extrabold' : 'font-semibold'}`}>{it.label}</span>
+            <span className={`text-[0.6875rem] leading-none ${it.active ? 'font-extrabold' : 'font-semibold'}`}>{it.label}</span>
           </button>
         ))}
       </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MediaItem } from '../types';
 import { WORKSPACE_CODE, fetchAlbumByToken, plural } from '../utils/storage';
 import { MediaViewer } from './MediaViewer';
+import { FontScaleButton } from './FontScaleButton';
 import { Play } from 'lucide-react';
 
 type State =
@@ -58,13 +59,18 @@ export const AlbumPage: React.FC<{ token: string }> = ({ token }) => {
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <span className="font-bold text-slate-900">🎅 Вызов Деда Мороза</span>
-          <button
-            type="button"
-            onClick={goHome}
-            className="text-sm text-blue-600 hover:text-blue-700 underline cursor-pointer"
-          >
-            На сайт
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="rounded-full" style={{ background: '#5d3eb0' }}>
+              <FontScaleButton variant="pill" />
+            </div>
+            <button
+              type="button"
+              onClick={goHome}
+              className="text-sm text-blue-600 hover:text-blue-700 underline cursor-pointer"
+            >
+              На сайт
+            </button>
+          </div>
         </div>
       </header>
 
@@ -111,6 +117,7 @@ export const AlbumPage: React.FC<{ token: string }> = ({ token }) => {
                           src={m.thumb || m.url}
                           alt={m.caption || ''}
                           loading="lazy"
+                          decoding="async"
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
                       ) : (

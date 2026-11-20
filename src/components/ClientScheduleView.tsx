@@ -411,14 +411,14 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                       : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                   }`}
                 >
-                  <span className="block text-[10px] uppercase opacity-70">
+                  <span className="block text-[0.625rem] uppercase opacity-70">
                     {d.toLocaleDateString('ru-RU', { weekday: 'short' }).replace('.', '')}
                   </span>
                   <span className="block text-xl font-bold leading-tight">{d.getDate()}</span>
-                  <span className="block text-[10px] opacity-70">
+                  <span className="block text-[0.625rem] opacity-70">
                     {d.toLocaleDateString('ru-RU', { month: 'short' }).replace('.', '')}
                   </span>
-                  <span className={`block text-[9px] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
+                  <span className={`block text-[0.5625rem] mt-0.5 ${active ? 'text-white/80' : 'text-slate-400'}`}>
                     {!windowFor(hours, k) ? 'закрыто' : busy ? (count ? `занято: ${count}` : 'свободно') : ' '}
                   </span>
                 </button>
@@ -450,7 +450,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
             <Clock className="w-4 h-4 text-slate-500" />
             Время на {selectedDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
           </h3>
-          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-500">
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[0.6875rem] text-slate-500">
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-emerald-300 bg-white" />свободно</span>
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm bg-slate-200" />занято</span>
             <span className="flex items-center gap-1"><i className="inline-block w-2.5 h-2.5 rounded-sm border border-dashed border-slate-300 bg-slate-100" />не работаем</span>
@@ -492,7 +492,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                 }`}
               >
                 <span className="block text-sm font-bold tabular-nums">{hh(hour)}</span>
-                <span className="block text-[10px] mt-0.5">{label}</span>
+                <span className="block text-[0.625rem] mt-0.5">{label}</span>
               </button>
             );
           })}
@@ -623,7 +623,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                       <span className="font-normal text-slate-500">· {cfg.name}</span>
                       {b.num && <span className="font-normal text-slate-500"> · № {b.num}</span>}
                     </div>
-                    <span className={`inline-block mt-1 text-[11px] font-bold rounded-full px-2.5 py-0.5 ${badge}`}>
+                    <span className={`inline-block mt-1 text-[0.6875rem] font-bold rounded-full px-2.5 py-0.5 ${badge}`}>
                       {st === 'pending' ? '⏳ ' : st === 'confirmed' ? '✅ ' : '✖ '}
                       {statusLabel(st)}
                     </span>

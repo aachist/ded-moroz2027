@@ -54,6 +54,19 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
     }
   };
 
+  // Заранее подгружаем соседние фото, чтобы листание не тормозило
+  useEffect(() => {
+    if (mediaList.length < 2) return;
+    for (const d of [1, -1]) {
+      const n = mediaList[(currentIndex + d + mediaList.length) % mediaList.length];
+      if (n && n.type === 'photo' && n.url && !n.url.startsWith('data:')) {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = n.url;
+      }
+    }
+  }, [currentIndex, mediaList]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Пока печатаем подпись, горячие клавиши (пробел, стрелки) не должны срабатывать

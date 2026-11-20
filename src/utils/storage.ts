@@ -1,5 +1,5 @@
 import { Album, DaySchedule, MediaItem, StorageConfig } from '../types';
-import { compressImage } from './videoThumb';
+import { compressImage, makeThumbBlob } from './videoThumb';
 
 /** Версия расписания с меткой времени (локальная или с сервера). */
 export interface RemoteSchedule {
@@ -505,6 +505,11 @@ export async function fetchMediaList(
       l.album = s.album || undefined;
       if (localIds.has(l.id)) captionSaves.add(l.id);
     }
+    // Маленькое превью фото, созданное на другом устройстве
+    if (isSmallThumbUrl(s.thumb) && l.cloudThumb !== s.thumb) {
+      l.cloudThumb = s.thumb;
+      if (localIds.has(l.id)) captionSaves.add(l.id);
+    }
     if ((s.captionAt || 0) > (l.captionAt || 0)) {
       l.caption = s.caption;
       l.captionAt = s.captionAt;
@@ -624,7 +629,8 @@ export async function uploadMediaFile(
       created: Date.now(),
       size: file.size,
       url: photoDataUrl,
-      thumb: photoDataUrl,
+      // В локальной сетке показываем маленькое превью (если оно передано), а не сжатое фото на 1600 пикселей
+      thumb: thumbnailDataUrl || photoDataUrl,
       data: photoDataUrl,
       album: album || undefined,
       storageSource: 'local',
@@ -770,11 +776,93 @@ function describeCloudError(e: any): string {
   return msg.slice(0, 160);
 }
 
-function toServerItem(item: MediaItem, cloudUrl: string) {
-  // Превью видео — небольшая картинка; у фото превью = сам файл
+/** Создаёт маленькое превью фото и выгружает его в облако рядом с основным файлом. Возвращает ссылку. */
+async function uploadPhotoThumb(syncCode: string, id: string, photo: Blob): Promise<string> {
+  const thumb = await makeThumbBlob(photo);
+  const { upload } = await import('@vercel/blob/client');
+  const res = await upload(`media/${syncCode}/${id}-t.jpg`, thumb, {
+    access: 'public',
+    handleUploadUrl: '/api/blob-upload',
+    clientPayload: JSON.stringify({ code: syncCode }),
+    contentType: 'image/jpeg',
+  });
+  return res.url;
+}
+
+/** Ссылка на маленькое превью (создаётся функцией выше), а не на сам файл. */
+const isSmallThumbUrl = (u?: string): boolean => !!u && /-t\.jpg(\?|$)/.test(u);
+
+export interface PreviewsResult {
+  total: number; // сколько фото нуждалось в превью
+  done: number;
+  failed: number;
+}
+
+/**
+ * Создаёт маленькие превью для уже загруженных фото (кнопка в «Настройках»).
+ * Идёт по одному, ничего не удаляет и не меняет сами файлы. Готовые превью пропускает.
+ */
+export async function generateMissingPreviews(
+  syncCode: string,
+  items: MediaItem[],
+  onProgress?: (done: number, total: number) => void
+): Promise<PreviewsResult> {
+  const targets = items.filter(
+    (m) =>
+      m.type === 'photo' &&
+      (m.cloudUrl || /\.public\.blob\.vercel-storage\.com\//i.test(m.url)) &&
+      !m.cloudThumb &&
+      !isSmallThumbUrl(m.thumb)
+  );
+  let done = 0;
+  let failed = 0;
+  onProgress?.(0, targets.length);
+  for (const m of targets) {
+    try {
+      // Исходник: локальная копия (сжатое фото) или файл из облака
+      let source: Blob;
+      if (m.data) source = await (await fetch(m.data)).blob();
+      else source = await (await fetch(m.cloudUrl || m.url)).blob();
+      const thumbUrl = await uploadPhotoThumb(syncCode, m.id, source);
+      const res = await fetch(`/api/media-list/${syncCode}/${encodeURIComponent(m.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thumb: thumbUrl }),
+      });
+      // 404/410: файл ещё не на сервере или уже удалён; превью останется только локальным
+      if (!res.ok && res.status !== 404 && res.status !== 410) throw new Error(`HTTP ${res.status}`);
+      // Локальная копия на этом устройстве: тоже маленькое превью вместо большого
+      try {
+        const small = await makeThumbBlob(source);
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result as string);
+          r.onerror = reject;
+          r.readAsDataURL(small);
+        });
+        const local = (await idbGetMediaList(syncCode)).find((x) => x.id === m.id);
+        if (local) {
+          local.thumb = dataUrl;
+          local.cloudThumb = thumbUrl;
+          await idbSaveMedia(local);
+        }
+      } catch {}
+      done++;
+    } catch (e) {
+      console.warn('Preview failed:', m.name, e);
+      failed++;
+    }
+    onProgress?.(done + failed, targets.length);
+  }
+  return { total: targets.length, done, failed };
+}
+
+function toServerItem(item: MediaItem, cloudUrl: string, thumbUrl?: string) {
+  // Превью видео — небольшая картинка. У фото в сетке показывается маленькое превью (если оно создано),
+  // иначе сам файл
   const thumb =
     item.type === 'photo'
-      ? cloudUrl
+      ? thumbUrl || item.cloudThumb || cloudUrl
       : item.thumb && item.thumb.length < 150_000
       ? item.thumb
       : undefined;
@@ -822,10 +910,20 @@ async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): 
       onUploadProgress: (e) => setCloudStatus({ progress: Math.round(e.percentage) }),
     });
 
+    // Маленькое превью фото для быстрой сетки. Если не получилось, не страшно: в сетке будет сам файл
+    let thumbUrl: string | undefined;
+    if (item.type === 'photo') {
+      try {
+        thumbUrl = await uploadPhotoThumb(syncCode, item.id, body);
+      } catch (e) {
+        console.warn('Thumb upload failed:', item.name, e);
+      }
+    }
+
     const res = await fetch(`/api/media-list/${syncCode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toServerItem(item, blob.url)),
+      body: JSON.stringify(toServerItem(item, blob.url, thumbUrl)),
     });
     if (res.status === 410) {
       // Файл удалили на другом устройстве, пока он выгружался: сервер уже убрал его из облака
@@ -835,6 +933,7 @@ async function uploadToCloud(syncCode: string, item: MediaItem, source?: Blob): 
     if (!res.ok) throw new Error(`media-list HTTP ${res.status}`);
 
     item.cloudUrl = blob.url;
+    if (thumbUrl) item.cloudThumb = thumbUrl;
     cloudFailedAt.delete(item.id);
     idbSaveMedia(item).catch(() => {});
     setCloudStatus({ uploading: null, progress: 100, lastError: null, lastOkAt: Date.now() });

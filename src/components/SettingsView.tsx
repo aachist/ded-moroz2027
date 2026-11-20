@@ -14,6 +14,7 @@ import {
   windowFor,
 } from '../utils/hours';
 import { Booking, fetchBookings } from '../utils/bookings';
+import { fetchMediaList, generateMissingPreviews } from '../utils/storage';
 
 interface Props {
   syncCode: string;
@@ -55,6 +56,36 @@ export const SettingsView: React.FC<Props> = ({ syncCode }) => {
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [affected, setAffected] = useState<Booking[]>([]);
+
+  // Превью фото для старых загрузок
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewMsg, setPreviewMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  const runPreviews = async () => {
+    if (previewBusy) return;
+    setPreviewBusy(true);
+    setPreviewMsg({ type: 'ok', text: 'Ищем фото без превью…' });
+    try {
+      const items = await fetchMediaList(syncCode);
+      const res = await generateMissingPreviews(syncCode, items, (done, total) =>
+        setPreviewMsg({ type: 'ok', text: `Создаём превью: ${done} из ${total}…` })
+      );
+      if (res.total === 0) {
+        setPreviewMsg({ type: 'ok', text: 'Все фото уже с превью, делать ничего не нужно.' });
+      } else if (res.failed === 0) {
+        setPreviewMsg({ type: 'ok', text: `Готово: превью созданы для ${res.done} фото. Обновите страницу «Фото и видео».` });
+      } else {
+        setPreviewMsg({
+          type: 'err',
+          text: `Создано ${res.done} из ${res.total}, не получилось: ${res.failed}. Проверьте интернет и нажмите кнопку ещё раз: готовые превью пропускаются.`,
+        });
+      }
+    } catch {
+      setPreviewMsg({ type: 'err', text: 'Не удалось создать превью. Проверьте интернет и войдите как администратор.' });
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
 
   // Форма добавления исключения
   const [exDate, setExDate] = useState('');
@@ -333,6 +364,27 @@ export const SettingsView: React.FC<Props> = ({ syncCode }) => {
             </ul>
           )}
         </div>
+      </div>
+
+      <div className={card}>
+        <h3 className="font-bold text-slate-900">Быстрые превью фото</h3>
+        <p className="text-sm text-slate-600 mt-1 mb-3">
+          Новые фото получают маленькое превью автоматически, и галерея открывается быстрее. Для фото, загруженных раньше,
+          превью можно создать одной кнопкой. Сами фото не меняются и не удаляются. Страницу не закрывайте, пока идёт
+          создание (при большом числе фото это может занять несколько минут).
+        </p>
+        <button
+          type="button"
+          onClick={runPreviews}
+          disabled={previewBusy}
+          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60 cursor-pointer flex items-center gap-2"
+        >
+          {previewBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+          Создать превью для старых фото
+        </button>
+        {previewMsg && (
+          <p className={`mt-3 text-sm ${previewMsg.type === 'ok' ? 'text-emerald-700' : 'text-rose-700'}`}>{previewMsg.text}</p>
+        )}
       </div>
 
       <div className={`${card} flex items-center gap-3 flex-wrap sticky bottom-20 sm:bottom-4 z-10`}>

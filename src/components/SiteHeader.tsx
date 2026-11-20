@@ -1,5 +1,6 @@
 import React from 'react';
 import { PageKey, PAGE_LABELS } from '../nav';
+import { FontScaleButton } from './FontScaleButton';
 import { LogOut, Phone, Home } from 'lucide-react';
 
 interface SiteHeaderProps {
@@ -45,6 +46,7 @@ export const SiteHeader: React.FC<SiteHeaderProps> = ({
           </button>
 
           <div className="flex items-center gap-2 shrink-0">
+            <FontScaleButton variant="pill" />
             {phoneHref ? (
               <a href={phoneHref} className="btn-lime !py-2 !px-4 text-sm">
                 <Phone className="w-4 h-4" />

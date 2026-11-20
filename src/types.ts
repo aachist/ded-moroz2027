@@ -40,6 +40,7 @@ export interface MediaItem {
   captionAt?: number;  // Когда подпись изменена (для выбора более свежей версии при синхронизации)
   duration?: number;   // Video duration in seconds
   album?: string;      // id личного альбома; без него файл лежит в общей галерее
+  cloudThumb?: string; // ссылка на маленькое превью фото в облаке (для сетки галереи)
   storageSource?: 'local' | 'server' | 'firebase';
 }
 

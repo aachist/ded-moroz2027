@@ -337,6 +337,21 @@ async function handler(req: any, res: any) {
   try {
     if (req.method === 'PATCH') {
       const b = req.body;
+      // Маленькое превью фото для сетки галереи: { thumb: "<blob-url>" } (создаётся при загрузке и кнопкой «Создать превью»)
+      if (b && typeof b === 'object' && 'thumb' in b && !('album' in b) && !('caption' in b)) {
+        if (typeof b.thumb !== 'string' || !BLOB_HOST_RE.test(b.thumb)) {
+          return res.status(400).json({ error: 'Неверная ссылка на превью' });
+        }
+        if (Number(await redis(['HEXISTS', delKey, id])) === 1) {
+          return res.status(410).json({ error: 'Файл удалён' });
+        }
+        const rawThumbItem = await redis(['HGET', key, id]);
+        if (!rawThumbItem) return res.status(404).json({ error: 'Файл не найден' });
+        const withThumb = JSON.parse(rawThumbItem);
+        withThumb.thumb = b.thumb;
+        await redis(['HSET', key, id, JSON.stringify(withThumb)]);
+        return res.status(200).json({ success: true });
+      }
       // Переместить файл в личный альбом или обратно в общую галерею: { album: "<id>" | null }
       if (b && typeof b === 'object' && 'album' in b) {
         if (Number(await redis(['HEXISTS', delKey, id])) === 1) {
