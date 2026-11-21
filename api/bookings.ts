@@ -86,6 +86,7 @@ const LOOKUP_IP_LIMIT = 15; // поисков заявки с одного IP з
 const LOOKUP_IP_WINDOW = 600; // секунд
 const LOOKUP_FAIL_LIMIT = 8; // неудачных попыток на один телефон за окно
 const LOOKUP_FAIL_WINDOW = 3600; // секунд
+const CANCEL_CONFIRMED_MIN = 60; // подтверждённую заявку клиент может отменить не позднее чем за столько минут до начала
 
 /* ---------- Часы работы и закрытые даты (настраиваются на странице «Настройки») ---------- */
 type HoursWindow = { open: number; close: number }; // целые часы: open 0..23, close 1..24
@@ -310,12 +311,22 @@ async function handler(req: any, res: any) {
           if (st === 'declined') {
             return res.status(409).json({ error: 'declined', message: 'Заявка уже отклонена, отменять нечего.' });
           }
-          // После начала встречи отменить нельзя (время по Москве)
+          // Сколько минут до начала встречи (время по Москве). После начала отменить нельзя;
+          // подтверждённую заявку можно отменить не позднее чем за 1 час до начала (ожидающую до начала)
           const now = mskNow();
-          if (String(found.date) < now.date || (String(found.date) === now.date && toMin(String(found.start)) <= now.min)) {
+          const nowMs = Date.parse(`${now.date}T00:00:00Z`) + now.min * 60000;
+          const startMs = Date.parse(`${String(found.date)}T00:00:00Z`) + toMin(String(found.start)) * 60000;
+          const minutesLeft = (startMs - nowMs) / 60000;
+          if (minutesLeft <= 0) {
             return res.status(409).json({
               error: 'too_late',
               message: 'Время встречи уже наступило или прошло, отмена недоступна. Пожалуйста, позвоните нам.',
+            });
+          }
+          if (st === 'confirmed' && minutesLeft < CANCEL_CONFIRMED_MIN) {
+            return res.status(409).json({
+              error: 'too_late_confirmed',
+              message: 'Подтверждённую заявку можно отменить не позднее чем за 1 час до начала. Пожалуйста, позвоните нам.',
             });
           }
           found.status = 'cancelled';

@@ -709,16 +709,23 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                             </div>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCancelTarget(b.id);
-                              setCancelMsg(null);
-                            }}
-                            className="mt-2 text-xs font-semibold text-rose-700 hover:text-rose-800 underline cursor-pointer"
-                          >
-                            Отменить заявку
-                          </button>
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCancelTarget(b.id);
+                                setCancelMsg(null);
+                              }}
+                              className="text-xs font-semibold text-rose-700 hover:text-rose-800 underline cursor-pointer"
+                            >
+                              Отменить заявку
+                            </button>
+                            {st === 'confirmed' && (
+                              <div className="text-[0.6875rem] text-slate-400 mt-0.5">
+                                Подтверждённую заявку можно отменить не позднее чем за 1 час до начала.
+                              </div>
+                            )}
+                          </div>
                         )
                       ) : (
                         <div className="text-xs text-slate-400 mt-1.5">Чтобы отменить эту заявку, позвоните нам.</div>
