@@ -40,7 +40,7 @@ const inputCls = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 t
 const outsideHours = (bookings: Booking[], rules: HoursRules): Booking[] => {
   const today = todayKey();
   return bookings.filter((b) => {
-    if (b.date < today || b.status === 'declined') return false;
+    if (b.date < today || b.status === 'declined' || b.status === 'cancelled') return false;
     const w = windowFor(rules, b.date);
     if (!w) return true;
     const s = Number(b.start.slice(0, 2)) * 60 + Number(b.start.slice(3, 5));

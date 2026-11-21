@@ -7,6 +7,7 @@ import {
   fetchBookingStatuses,
   statusLabel,
   createBooking,
+  cancelBooking,
   lookupBooking,
   loadMyBookings,
   saveMyBookings,
@@ -86,6 +87,10 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
   const [lookupNum, setLookupNum] = useState('');
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupMsg, setLookupMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  // Отмена своей заявки: какая ждёт подтверждения «Да, отменить», идёт ли запрос, итог
+  const [cancelTarget, setCancelTarget] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelMsg, setCancelMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [note, setNote] = useState('');
   const [website, setWebsite] = useState(''); // ловушка для ботов
   const [submitting, setSubmitting] = useState(false);
@@ -149,7 +154,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
 
   // Свои заявки по id: на плитках они подписаны статусом, чужие — просто «занято»
   const myById = useMemo(() => new Map(myBookings.map((b) => [b.id, b])), [myBookings]);
-  const myOnDay = myBookings.filter((b) => b.date === selectedKey && b.status !== 'declined');
+  const myOnDay = myBookings.filter((b) => b.date === selectedKey && b.status !== 'declined' && b.status !== 'cancelled');
 
   const now = new Date();
   const isToday = selectedKey === keyOf(now);
@@ -172,6 +177,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       if (!(ss < he && hs < se)) continue;
       const own = slot.id ? myById.get(slot.id) : undefined;
       if (own) {
+        if (own.status === 'cancelled' || own.status === 'declined') continue; // уже освобождено, даже если занятость ещё не обновилась
         if (own.status === 'confirmed') mine = 'confirmed';
         else if (mine !== 'confirmed') mine = 'pending';
       } else {
@@ -292,6 +298,26 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       setMessage({ type: 'err', text: result.message });
     }
     loadBusy(); // обновляем занятость (в том числе при конфликте)
+  };
+
+  // Отмена своей заявки по телефону и номеру (они хранятся в заявке на этом устройстве)
+  const doCancel = async (b: Booking) => {
+    if (cancelBusy || !b.num) return;
+    setCancelBusy(true);
+    setCancelMsg(null);
+    const res = await cancelBooking(syncCode, b.phone, b.num);
+    setCancelBusy(false);
+    if (!res.ok) {
+      setCancelTarget(null);
+      setCancelMsg({ type: 'err', text: res.message });
+      return;
+    }
+    const next = myBookings.map((x) => (x.id === b.id ? { ...x, status: 'cancelled' as const } : x));
+    setMyBookings(next);
+    saveMyBookings(next);
+    setCancelTarget(null);
+    setCancelMsg({ type: 'ok', text: `Заявка № ${b.num} отменена. Время освобождено, мы получили уведомление.` });
+    loadBusy(); // плитки сразу обновятся
   };
 
   // Поиск заявки по телефону и номеру (на любом устройстве); найденная заявка добавляется в «Ваши заявки» этого устройства
@@ -596,6 +622,16 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
       {upcomingMine.length > 0 && (
         <div className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-xs">
           <h3 className="font-bold text-slate-900 mb-3">Ваши заявки</h3>
+          {cancelMsg && (
+            <div
+              className={`mb-3 flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${
+                cancelMsg.type === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}
+            >
+              {cancelMsg.type === 'ok' ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />}
+              <span className="break-words">{cancelMsg.text}</span>
+            </div>
+          )}
           <div className="space-y-2">
             {upcomingMine.map((b) => {
               const cfg = ACTIVITY_TYPES[b.type] || ACTIVITY_TYPES.other;
@@ -605,12 +641,19 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                   ? 'bg-emerald-100 text-emerald-800'
                   : st === 'declined'
                   ? 'bg-rose-100 text-rose-800'
+                  : st === 'cancelled'
+                  ? 'bg-slate-200 text-slate-700'
                   : 'bg-amber-100 text-amber-800';
+              const canCancel = (st === 'pending' || st === 'confirmed') && !!b.num;
               return (
                 <div
                   key={b.id}
                   className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 ${
-                    st === 'declined' ? 'border-rose-100 bg-rose-50/60' : 'border-slate-100 bg-slate-50'
+                    st === 'declined'
+                      ? 'border-rose-100 bg-rose-50/60'
+                      : st === 'cancelled'
+                      ? 'border-slate-100 bg-slate-50 opacity-70'
+                      : 'border-slate-100 bg-slate-50'
                   }`}
                 >
                   <span className="w-1.5 self-stretch rounded-full" style={{ backgroundColor: cfg.color }} />
@@ -624,7 +667,7 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                       {b.num && <span className="font-normal text-slate-500"> · № {b.num}</span>}
                     </div>
                     <span className={`inline-block mt-1 text-[0.6875rem] font-bold rounded-full px-2.5 py-0.5 ${badge}`}>
-                      {st === 'pending' ? '⏳ ' : st === 'confirmed' ? '✅ ' : '✖ '}
+                      {st === 'pending' ? '⏳ ' : st === 'confirmed' ? '✅ ' : st === 'cancelled' ? '🚫 ' : '✖ '}
                       {statusLabel(st)}
                     </span>
                     {st === 'declined' && (
@@ -632,9 +675,56 @@ export const ClientScheduleView: React.FC<Props> = ({ syncCode }) => {
                         {b.reason ? `Причина: ${b.reason}. ` : ''}К сожалению, это время не подошло. Выберите другое или позвоните нам.
                       </div>
                     )}
+                    {st === 'cancelled' && (
+                      <div className="text-xs text-slate-500 mt-1">Заявка отменена, время освобождено.</div>
+                    )}
                     {b.note && <div className="text-xs text-slate-500 break-words mt-1">{b.note}</div>}
+
+                    {/* Отмена заявки: сначала просим подтвердить, чтобы случайно не отменить */}
+                    {(st === 'pending' || st === 'confirmed') &&
+                      (canCancel ? (
+                        cancelTarget === b.id ? (
+                          <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+                            <div className="text-xs text-rose-900 font-semibold">
+                              Отменить заявку № {b.num}? Время освободится, мы получим уведомление.
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                type="button"
+                                disabled={cancelBusy}
+                                onClick={() => doCancel(b)}
+                                className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-bold cursor-pointer flex items-center gap-1.5"
+                              >
+                                {cancelBusy && <Loader2 className="w-3 h-3 animate-spin" />}
+                                Да, отменить
+                              </button>
+                              <button
+                                type="button"
+                                disabled={cancelBusy}
+                                onClick={() => setCancelTarget(null)}
+                                className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold cursor-pointer"
+                              >
+                                Нет, оставить
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCancelTarget(b.id);
+                              setCancelMsg(null);
+                            }}
+                            className="mt-2 text-xs font-semibold text-rose-700 hover:text-rose-800 underline cursor-pointer"
+                          >
+                            Отменить заявку
+                          </button>
+                        )
+                      ) : (
+                        <div className="text-xs text-slate-400 mt-1.5">Чтобы отменить эту заявку, позвоните нам.</div>
+                      ))}
                   </div>
-                  {st === 'declined' && (
+                  {(st === 'declined' || st === 'cancelled') && (
                     <button
                       type="button"
                       onClick={() => {

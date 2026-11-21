@@ -277,13 +277,17 @@ async function savedChat(code: string): Promise<string | null> {
   return v && CHAT_RE.test(String(v)) ? String(v) : null;
 }
 
-const statusOf = (b: any): 'pending' | 'confirmed' | 'declined' =>
-  b?.status === 'pending' || b?.status === 'declined' ? b.status : 'confirmed';
+const statusOf = (b: any): 'pending' | 'confirmed' | 'declined' | 'cancelled' =>
+  b?.status === 'pending' || b?.status === 'declined' || b?.status === 'cancelled' ? b.status : 'confirmed';
 
 /** Текст сообщения после решения (заменяет исходное, кнопки убираются). */
-function resultText(b: any, status: 'confirmed' | 'declined'): string {
+function resultText(b: any, status: 'confirmed' | 'declined' | 'cancelled'): string {
   return [
-    status === 'confirmed' ? '✅ <b>Заявка подтверждена</b>' : '❌ <b>Заявка отклонена</b>',
+    status === 'confirmed'
+      ? '✅ <b>Заявка подтверждена</b>'
+      : status === 'cancelled'
+      ? '🚫 <b>Клиент отменил заявку</b>'
+      : '❌ <b>Заявка отклонена</b>',
     b.num ? `🔢 Заявка № <b>${esc(String(b.num))}</b>` : '',
     `📅 ${esc(dateRu(String(b.date)))}, <b>${esc(String(b.start))}–${esc(String(b.end))}</b>`,
     `🎭 ${b.type === 'adults' ? 'Взрослые' : 'Дети'}`,
@@ -351,7 +355,10 @@ async function handler(req: any, res: any) {
     const current = statusOf(booking);
 
     if (current !== 'pending') {
-      await answer(current === 'confirmed' ? 'Уже подтверждена' : 'Уже отклонена', true);
+      await answer(
+        current === 'confirmed' ? 'Уже подтверждена' : current === 'cancelled' ? 'Клиент уже отменил заявку' : 'Уже отклонена',
+        true
+      );
       await tg(token, 'editMessageText', {
         chat_id: chatId,
         message_id: messageId,

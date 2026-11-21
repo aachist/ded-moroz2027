@@ -59,7 +59,8 @@ function sanitizeBookings(raw: any): Booking[] {
       name: String(b.name || '').slice(0, 80),
       phone: String(b.phone || '').slice(0, 30),
       note: typeof b.note === 'string' && b.note ? b.note.slice(0, 500) : undefined,
-      status: b.status === 'pending' || b.status === 'declined' ? b.status : 'confirmed',
+      status: b.status === 'pending' || b.status === 'declined' || b.status === 'cancelled' ? b.status : 'confirmed',
+      num: typeof b.num === 'string' && /^\d{5}$/.test(b.num) ? b.num : undefined,
       reason: typeof b.reason === 'string' && b.reason ? b.reason.slice(0, 200) : undefined,
       createdAt: Number(b.createdAt) || 0,
     });
@@ -322,7 +323,7 @@ export async function restoreBackup(
   const incoming: DaySchedule = JSON.parse(JSON.stringify(manifest.schedule));
   for (const b of manifest.bookings || []) {
     if (currentBookingIds.has(b.id)) continue;
-    if (b.status === 'declined') continue; // отклонённая заявка время не занимала — в расписание не возвращаем
+    if (b.status === 'declined' || b.status === 'cancelled') continue; // отклонённая/отменённая заявка время не занимала — в расписание не возвращаем
     (incoming[b.date] ||= []).push(bookingToEvent(b));
   }
 

@@ -7,7 +7,7 @@ export interface ScheduleEvent {
   _col?: number;
   fromClient?: boolean; // заявка, оставленная клиентом на сайте (не часть расписания администратора)
   bookingId?: string;   // id заявки, если fromClient
-  bookingStatus?: 'pending' | 'confirmed' | 'declined'; // статус заявки (pending — ждёт подтверждения)
+  bookingStatus?: 'pending' | 'confirmed' | 'declined' | 'cancelled'; // статус заявки (pending — ждёт подтверждения; cancelled — отменена клиентом)
 }
 
 export interface ActivityTypeConfig {

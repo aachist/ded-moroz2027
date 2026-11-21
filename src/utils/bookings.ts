@@ -16,19 +16,26 @@ export interface BookingInput {
   website?: string; // скрытое поле-ловушка для ботов, у людей всегда пустое
 }
 
-export type BookingStatus = 'pending' | 'confirmed' | 'declined';
+export type BookingStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';
 
 export interface Booking extends Omit<BookingInput, 'website'> {
   id: string;
   num?: string; // короткий номер заявки из 5 цифр (у старых заявок его нет)
   createdAt: number;
-  status?: BookingStatus; // pending — ждёт подтверждения; нет статуса у старых заявок = подтверждена
+  status?: BookingStatus; // pending — ждёт подтверждения; cancelled — отменена клиентом; нет статуса у старых заявок = подтверждена
   reason?: string; // причина отклонения (если администратор указал)
   decidedAt?: number;
+  cancelledAt?: number;
 }
 
 export const statusLabel = (s: BookingStatus | undefined): string =>
-  s === 'pending' ? 'Ждёт подтверждения' : s === 'declined' ? 'Отклонена' : 'Подтверждена';
+  s === 'pending'
+    ? 'Ждёт подтверждения'
+    : s === 'declined'
+    ? 'Отклонена'
+    : s === 'cancelled'
+    ? 'Отменена вами'
+    : 'Подтверждена';
 
 const isJson = (res: Response) => (res.headers.get('content-type') || '').includes('application/json');
 
@@ -83,6 +90,25 @@ export async function lookupBooking(code: string, phone: string, num: string): P
     const json = isJson(res) ? await res.json().catch(() => ({})) : {};
     if (res.ok && json.booking) return { ok: true, booking: json.booking as Booking };
     return { ok: false, message: typeof json.message === 'string' ? json.message : 'Не удалось найти заявку. Попробуйте ещё раз.' };
+  } catch (e) {
+    return { ok: false, message: 'Нет связи с сервером. Проверьте интернет и повторите.' };
+  }
+}
+
+/**
+ * Отмена своей заявки клиентом по телефону и номеру. Время освобождается, владельцу уходит сообщение в Telegram.
+ * Отменить можно ожидающую или подтверждённую заявку до начала встречи.
+ */
+export async function cancelBooking(code: string, phone: string, num: string): Promise<LookupResult> {
+  try {
+    const res = await fetch(`/api/bookings/${code}?cancel=1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, num }),
+    });
+    const json = isJson(res) ? await res.json().catch(() => ({})) : {};
+    if (res.ok && json.booking) return { ok: true, booking: json.booking as Booking };
+    return { ok: false, message: typeof json.message === 'string' ? json.message : 'Не удалось отменить заявку. Попробуйте ещё раз или позвоните нам.' };
   } catch (e) {
     return { ok: false, message: 'Нет связи с сервером. Проверьте интернет и повторите.' };
   }

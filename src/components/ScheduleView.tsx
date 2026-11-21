@@ -117,7 +117,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   // но в списке остаются (затемнёнными), чтобы можно было посмотреть и удалить.
   const activeEvents: ScheduleEvent[] = [
     ...currentEvents,
-    ...bookingEvents.filter((e) => e.bookingStatus !== 'declined'),
+    ...bookingEvents.filter((e) => e.bookingStatus !== 'declined' && e.bookingStatus !== 'cancelled'),
   ];
   const displayEvents: ScheduleEvent[] = activeEvents;
   const listEvents: ScheduleEvent[] = [...currentEvents, ...bookingEvents];
@@ -558,13 +558,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     ? { cls: 'bg-amber-200 text-amber-900', text: '⏳ Ждёт подтверждения' }
                     : st === 'declined'
                     ? { cls: 'bg-rose-100 text-rose-800', text: '✖ Отклонена' }
+                    : st === 'cancelled'
+                    ? { cls: 'bg-slate-200 text-slate-700', text: '🚫 Отменена клиентом' }
                     : { cls: 'bg-emerald-100 text-emerald-800', text: '✅ Заявка подтверждена' };
                 return (
                   <div
                     key={evt.id}
                     className={`py-3 flex items-center justify-between gap-3 px-2 rounded-xl transition-colors ${
                       evt.fromClient
-                        ? st === 'declined'
+                        ? st === 'declined' || st === 'cancelled'
                           ? 'bg-slate-50 opacity-60'
                           : st === 'pending'
                           ? 'bg-amber-50/80 hover:bg-amber-50'
@@ -611,7 +613,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                           Подтвердить
                         </button>
                       )}
-                      {evt.fromClient && evt.bookingId && onUpdateBooking && st !== 'declined' && (
+                      {evt.fromClient && evt.bookingId && onUpdateBooking && st !== 'declined' && st !== 'cancelled' && (
                         <button
                           type="button"
                           disabled={deciding === evt.bookingId}

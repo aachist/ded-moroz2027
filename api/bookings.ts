@@ -160,8 +160,14 @@ async function notifyTelegram(code: string, html: string, replyMarkup?: any): Pr
 }
 
 /** Статус заявки; у заявок, созданных до подтверждений, статуса нет — они считаются подтверждёнными. */
-const statusOf = (b: any): 'pending' | 'confirmed' | 'declined' =>
-  b?.status === 'pending' || b?.status === 'declined' ? b.status : 'confirmed';
+const statusOf = (b: any): 'pending' | 'confirmed' | 'declined' | 'cancelled' =>
+  b?.status === 'pending' || b?.status === 'declined' || b?.status === 'cancelled' ? b.status : 'confirmed';
+
+/** Сейчас по московскому времени (владелец в России): дата и минуты от начала суток. Нужно для запрета отмены после начала. */
+function mskNow(): { date: string; min: number } {
+  const s = new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Moscow' }); // «YYYY-MM-DD HH:MM:SS»
+  return { date: s.slice(0, 10), min: Number(s.slice(11, 13)) * 60 + Number(s.slice(14, 16)) };
+}
 
 function clientIp(req: any): string {
   const xf = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
@@ -192,7 +198,7 @@ async function busyForDate(code: string, date: string): Promise<Array<{ s: numbe
   for (let i = 1; i < flat.length; i += 2) {
     try {
       const b = JSON.parse(flat[i]);
-      if (b.date === date && statusOf(b) !== 'declined') out.push({ s: toMin(b.start), e: toMin(b.end) });
+      if (b.date === date && !['declined', 'cancelled'].includes(statusOf(b))) out.push({ s: toMin(b.start), e: toMin(b.end) });
     } catch {}
   }
   return out;
@@ -259,8 +265,10 @@ async function handler(req: any, res: any) {
       }
       if (!b || typeof b !== 'object') return res.status(400).json({ error: 'invalid', message: 'Неверный запрос' });
 
-      // ---- Поиск своей заявки на любом устройстве: телефон + 5-значный номер (POST, чтобы телефон не попал в адрес) ----
-      if (String(req.query?.lookup ?? '') === '1') {
+      // ---- Поиск своей заявки (и её отмена) на любом устройстве: телефон + 5-значный номер ----
+      // Всё через POST, чтобы телефон не попал в адрес и журналы
+      const isCancel = String(req.query?.cancel ?? '') === '1';
+      if (String(req.query?.lookup ?? '') === '1' || isCancel) {
         const num = String(b.num ?? '').trim();
         const p10 = phoneDigits10(String(b.phone ?? ''));
         if (!/^\d{5}$/.test(num) || !p10) {
@@ -295,8 +303,50 @@ async function handler(req: any, res: any) {
           } catch {}
           return res.status(404).json({ error: 'not_found', message: 'Заявка не найдена. Проверьте телефон и номер.' });
         }
-        const st = statusOf(found);
+        let st = statusOf(found);
+        let justCancelled = false;
+
+        if (isCancel && st !== 'cancelled') {
+          if (st === 'declined') {
+            return res.status(409).json({ error: 'declined', message: 'Заявка уже отклонена, отменять нечего.' });
+          }
+          // После начала встречи отменить нельзя (время по Москве)
+          const now = mskNow();
+          if (String(found.date) < now.date || (String(found.date) === now.date && toMin(String(found.start)) <= now.min)) {
+            return res.status(409).json({
+              error: 'too_late',
+              message: 'Время встречи уже наступило или прошло, отмена недоступна. Пожалуйста, позвоните нам.',
+            });
+          }
+          found.status = 'cancelled';
+          found.cancelledAt = Date.now();
+          delete found.reason;
+          await redis(['HSET', key, found.id, JSON.stringify(found)]);
+          st = 'cancelled';
+          justCancelled = true;
+        }
+
+        // Владельцу в Telegram: отдельное сообщение без кнопок (при повторном нажатии клиента не дублируем)
+        if (justCancelled) {
+          await notifyTelegram(
+            code,
+            [
+              '🚫 <b>Клиент отменил заявку</b>',
+              found.num ? `🔢 Заявка № <b>${esc(String(found.num))}</b>` : '',
+              `📅 ${esc(dateRu(String(found.date)))}, <b>${esc(String(found.start))}–${esc(String(found.end))}</b>`,
+              `🎭 ${found.type === 'adults' ? 'Взрослые' : 'Дети'}`,
+              `👤 ${esc(String(found.name || ''))}`,
+              `📞 ${esc(String(found.phone || ''))}`,
+              'Время освобождено.',
+              siteUrl() ? `\n<a href="${siteUrl()}/#schedule">Открыть расписание</a>` : '',
+            ]
+              .filter(Boolean)
+              .join('\n')
+          );
+        }
+
         return res.status(200).json({
+          ...(isCancel ? { cancelled: st === 'cancelled' } : {}),
           booking: {
             id: found.id,
             num: found.num,
@@ -531,6 +581,10 @@ async function handler(req: any, res: any) {
     const raw = await redis(['HGET', key, id]);
     if (!raw) return res.status(404).json({ error: 'Заявка не найдена (возможно, уже удалена)' });
     const booking = JSON.parse(raw);
+    // Клиент уже отменил заявку: подтвердить или отклонить её нельзя (время свободно)
+    if (booking.status === 'cancelled') {
+      return res.status(409).json({ error: 'Клиент отменил эту заявку. Обновите список.' });
+    }
 
     booking.status = status;
     booking.decidedAt = Date.now();
@@ -634,7 +688,7 @@ async function handler(req: any, res: any) {
     for (let i = 1; i < flat.length; i += 2) {
       try {
         const b = JSON.parse(flat[i]);
-        if (b.status === 'declined') continue; // отклонённая заявка время не занимает
+        if (b.status === 'declined' || b.status === 'cancelled') continue; // отклонённая и отменённая заявки время не занимают
         add(String(b.date), b.start, b.end, String(b.id));
       } catch {}
     }
